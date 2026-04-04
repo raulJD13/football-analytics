@@ -1,0 +1,39 @@
+[0m17:36:04.571001 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'start', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1092f96d0>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b6af90>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b6ad20>]}
+
+
+============================== 17:36:04.574066 | 166c6f22-9fcb-45e4-aa12-d451f556006a ==============================
+[0m17:36:04.574066 [info ] [MainThread]: Running with dbt=1.11.7
+[0m17:36:04.574367 [debug] [MainThread]: running dbt with arguments {'target_path': 'None', 'log_cache_events': 'False', 'warn_error': 'None', 'log_path': 'logs', 'debug': 'False', 'use_experimental_parser': 'False', 'version_check': 'True', 'introspect': 'True', 'quiet': 'False', 'write_json': 'True', 'fail_fast': 'False', 'indirect_selection': 'eager', 'partial_parse': 'True', 'empty': 'None', 'printer_width': '80', 'no_print': 'None', 'cache_selected_only': 'False', 'use_colors': 'True', 'static_parser': 'True', 'log_format': 'default', 'profiles_dir': '/Users/rauljimenez/.dbt', 'invocation_command': 'dbt debug', 'warn_error_options': 'WarnErrorOptionsV2(error=[], warn=[], silence=[])', 'send_anonymous_usage_stats': 'True'}
+[0m17:36:04.583364 [info ] [MainThread]: dbt version: 1.11.7
+[0m17:36:04.583541 [info ] [MainThread]: python version: 3.12.12
+[0m17:36:04.583682 [info ] [MainThread]: python path: /Users/rauljimenez/Development/Projects/AI-Projects/football-analytics/venv/bin/python3.12
+[0m17:36:04.583819 [info ] [MainThread]: os info: macOS-26.3.1-arm64-arm-64bit
+[0m17:36:04.583952 [info ] [MainThread]: Using profiles dir at /Users/rauljimenez/.dbt
+[0m17:36:04.584082 [info ] [MainThread]: Using profiles.yml file at /Users/rauljimenez/.dbt/profiles.yml
+[0m17:36:04.584209 [info ] [MainThread]: Using dbt_project.yml file at /Users/rauljimenez/Development/Projects/AI-Projects/football-analytics/dbt_project.yml
+[0m17:36:04.584338 [info ] [MainThread]: Configuration:
+[0m17:36:04.584454 [info ] [MainThread]:   profiles.yml file [[31mERROR not found[0m]
+[0m17:36:04.584570 [info ] [MainThread]:   dbt_project.yml file [[31mERROR not found[0m]
+[0m17:36:04.584684 [info ] [MainThread]: Required dependencies:
+[0m17:36:04.584844 [debug] [MainThread]: Executing "git --help"
+[0m17:36:04.614409 [debug] [MainThread]: STDOUT: "b"usage: git [-v | --version] [-h | --help] [-C <path>] [-c <name>=<value>]\n           [--exec-path[=<path>]] [--html-path] [--man-path] [--info-path]\n           [-p | --paginate | -P | --no-pager] [--no-replace-objects] [--no-lazy-fetch]\n           [--no-optional-locks] [--no-advice] [--bare] [--git-dir=<path>]\n           [--work-tree=<path>] [--namespace=<name>] [--config-env=<name>=<envvar>]\n           <command> [<args>]\n\nThese are common Git commands used in various situations:\n\nstart a working area (see also: git help tutorial)\n   clone      Clone a repository into a new directory\n   init       Create an empty Git repository or reinitialize an existing one\n\nwork on the current change (see also: git help everyday)\n   add        Add file contents to the index\n   mv         Move or rename a file, a directory, or a symlink\n   restore    Restore working tree files\n   rm         Remove files from the working tree and from the index\n\nexamine the history and state (see also: git help revisions)\n   bisect     Use binary search to find the commit that introduced a bug\n   diff       Show changes between commits, commit and working tree, etc\n   grep       Print lines matching a pattern\n   log        Show commit logs\n   show       Show various types of objects\n   status     Show the working tree status\n\ngrow, mark and tweak your common history\n   backfill   Download missing objects in a partial clone\n   branch     List, create, or delete branches\n   commit     Record changes to the repository\n   merge      Join two or more development histories together\n   rebase     Reapply commits on top of another base tip\n   reset      Reset current HEAD to the specified state\n   switch     Switch branches\n   tag        Create, list, delete or verify a tag object signed with GPG\n\ncollaborate (see also: git help workflows)\n   fetch      Download objects and refs from another repository\n   pull       Fetch from and integrate with another repository or a local branch\n   push       Update remote refs along with associated objects\n\n'git help -a' and 'git help -g' list available subcommands and some\nconcept guides. See 'git help <command>' or 'git help <concept>'\nto read about a specific subcommand or concept.\nSee 'git help git' for an overview of the system.\n""
+[0m17:36:04.614924 [debug] [MainThread]: STDERR: "b''"
+[0m17:36:04.615113 [info ] [MainThread]:  - git [[32mOK found[0m]
+
+[0m17:36:04.615284 [info ] [MainThread]: Connection test skipped since no profile was found
+[0m17:36:04.615509 [info ] [MainThread]: [31m2 checks failed:[0m
+[0m17:36:04.615645 [info ] [MainThread]: dbt looked for a profiles.yml file in /Users/rauljimenez/.dbt/profiles.yml, but did
+not find one. For more information on configuring your profile, consult the
+documentation:
+
+https://docs.getdbt.com/docs/configure-your-profile
+
+
+[0m17:36:04.615788 [info ] [MainThread]: Project loading failed for the following reason:
+ project path </Users/rauljimenez/Development/Projects/AI-Projects/football-analytics/dbt_project.yml> not found
+
+[0m17:36:04.617720 [debug] [MainThread]: Resource report: {"command_name": "debug", "command_success": false, "command_wall_clock_time": 0.08774792, "process_in_blocks": "0", "process_kernel_time": 0.130921, "process_mem_max_rss": "113229824", "process_out_blocks": "0", "process_user_time": 0.717253}
+[0m17:36:04.618034 [debug] [MainThread]: Command `dbt debug` failed at 17:36:04.617976 after 0.09 seconds
+[0m17:36:04.618294 [debug] [MainThread]: Sending event: {'category': 'dbt', 'action': 'invocation', 'label': 'end', 'context': [<snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x1097d0e60>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b94f50>, <snowplow_tracker.self_describing_json.SelfDescribingJson object at 0x109b076b0>]}
+[0m17:36:04.618513 [debug] [MainThread]: Flushing usage events
+[0m17:36:05.257007 [debug] [MainThread]: An error was encountered while trying to flush usage events

@@ -1,0 +1,114 @@
+version: 2
+
+models:
+  - name: mart_standings
+    description: "Current season standings computed from match results. One row per team."
+    columns:
+      - name: team_id
+        description: "Unique team identifier (PK)."
+        tests:
+          - not_null
+          - unique
+      - name: position
+        description: "Current league position (1 = top)."
+        tests:
+          - not_null
+      - name: team_name
+        description: "Full team name."
+        tests:
+          - not_null
+      - name: played_games
+        description: "Total matches played."
+        tests:
+          - not_null
+      - name: points
+        description: "Total points accumulated."
+        tests:
+          - not_null
+      - name: goal_difference
+        description: "Goals scored minus goals conceded."
+        tests:
+          - not_null
+
+  - name: mart_team_stats
+    description: >
+      Aggregated team statistics split by home and away venue.
+      Includes attack_strength and defence_weakness used by the Poisson model.
+    columns:
+      - name: team_id
+        description: "Unique team identifier (PK)."
+        tests:
+          - not_null
+          - unique
+      - name: home_played
+        description: "Matches played at home."
+        tests:
+          - not_null
+      - name: away_played
+        description: "Matches played away."
+        tests:
+          - not_null
+      - name: home_attack_strength
+        description: "Home avg goals scored / league avg. >1 = above average attack."
+      - name: away_defence_weakness
+        description: "Away avg goals conceded / league avg. >1 = leaky defence on the road."
+
+  - name: mart_match_features
+    description: >
+      One row per finished match with all ML features pre-joined.
+      Consumed directly by train_classifier.py and train_poisson.py.
+      form_* columns use data from BEFORE each match (no leakage).
+    columns:
+      - name: match_id
+        description: "Unique match identifier (PK)."
+        tests:
+          - not_null
+          - unique
+      - name: match_date
+        description: "Date the match was played."
+        tests:
+          - not_null
+      - name: home_team_id
+        description: "Home team identifier."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_teams')
+              field: team_id
+      - name: away_team_id
+        description: "Away team identifier."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_teams')
+              field: team_id
+      - name: result
+        description: "Match result: H (home win), D (draw), A (away win). Target variable."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["H", "D", "A"]
+      - name: home_form_5
+        description: "Home team points in the 5 matches before this one (0 if first match)."
+        tests:
+          - not_null
+      - name: away_form_5
+        description: "Away team points in the 5 matches before this one (0 if first match)."
+        tests:
+          - not_null
+      - name: h2h_home_win_rate
+        description: "Historical home win rate for this exact fixture. Defaults to 0.45."
+        tests:
+          - not_null
+      - name: home_rest_days
+        description: "Days since the home team's previous match. Defaults to 7."
+        tests:
+          - not_null
+      - name: away_rest_days
+        description: "Days since the away team's previous match. Defaults to 7."
+        tests:
+          - not_null
+      - name: position_diff
+        description: "home_position minus away_position. Negative = home team is ranked higher."
+        tests:
+          - not_null

@@ -1,0 +1,43 @@
+"""Football Analytics — FastAPI application.
+
+Endpoints
+---------
+POST /predict   → match outcome probabilities (Poisson model)
+
+Future routers (Phase 5):
+  GET /standings  → current + projected table
+  GET /teams/{id} → team stats and form
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from api.routers.predict import lifespan, router as predict_router
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
+
+app = FastAPI(
+    title="Football Analytics API",
+    description="LaLiga match prediction and stats platform.",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # React dev server
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(predict_router)
+
+
+@app.get("/health", tags=["ops"])
+def health() -> dict[str, str]:
+    """Liveness probe."""
+    return {"status": "ok"}

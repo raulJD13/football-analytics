@@ -1,0 +1,11 @@
+football_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: clickhouse
+      schema: football
+      host: localhost
+      port: 8124
+      user: default
+      password: ""
+      secure: false

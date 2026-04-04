@@ -1,0 +1,67 @@
+version: 2
+
+models:
+  - name: stg_matches
+    description: "Finished LaLiga matches with casted types. One row per match."
+    columns:
+      - name: match_id
+        description: "Unique match identifier (PK)."
+        tests:
+          - not_null
+          - unique
+      - name: match_date
+        description: "Match date (UTC) cast to Date."
+        tests:
+          - not_null
+      - name: match_datetime
+        description: "Full UTC datetime string of kick-off."
+      - name: status
+        description: "Always FINISHED in this model (pre-filtered)."
+        tests:
+          - accepted_values:
+              values: ["FINISHED"]
+      - name: matchday
+        description: "Matchday number within the season."
+        tests:
+          - not_null
+      - name: home_team_id
+        description: "Home team identifier (FK → stg_teams.team_id)."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_teams')
+              field: team_id
+      - name: away_team_id
+        description: "Away team identifier (FK → stg_teams.team_id)."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_teams')
+              field: team_id
+      - name: home_goals
+        description: "Full-time goals scored by the home team."
+        tests:
+          - not_null
+      - name: away_goals
+        description: "Full-time goals scored by the away team."
+        tests:
+          - not_null
+      - name: winner
+        description: "Match outcome: HOME_TEAM, AWAY_TEAM, or DRAW."
+        tests:
+          - not_null
+          - accepted_values:
+              values: ["HOME_TEAM", "AWAY_TEAM", "DRAW"]
+
+  - name: stg_teams
+    description: "Unique teams derived from match participants. One row per team."
+    columns:
+      - name: team_id
+        description: "Unique team identifier (PK)."
+        tests:
+          - not_null
+          - unique
+      - name: team_name
+        description: "Full team name."
+        tests:
+          - not_null

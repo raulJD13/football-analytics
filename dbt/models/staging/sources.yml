@@ -1,0 +1,49 @@
+version: 2
+
+sources:
+  - name: raw
+    description: "Raw tables loaded from MinIO Parquet files into ClickHouse."
+    schema: football
+    tables:
+      - name: matches
+        identifier: raw_matches
+        description: "Raw match data ingested by the ingest_matches DAG."
+        columns:
+          - name: match_id
+            description: "Unique match identifier from football-data.org."
+          - name: utc_date
+            description: "Match kick-off datetime in UTC."
+          - name: status
+            description: "Match status: FINISHED, SCHEDULED, IN_PLAY, etc."
+          - name: matchday
+            description: "Matchday number within the season."
+          - name: home_team_id
+          - name: home_team_name
+          - name: away_team_id
+          - name: away_team_name
+          - name: home_score_full
+          - name: away_score_full
+          - name: home_score_half
+          - name: away_score_half
+          - name: winner
+            description: "HOME_TEAM | AWAY_TEAM | DRAW | null (unplayed)."
+          - name: season_start_date
+          - name: season_end_date
+
+      - name: standings
+        identifier: raw_standings
+        description: "Raw standings snapshot ingested by the ingest_standings DAG."
+        columns:
+          - name: position
+          - name: team_id
+          - name: team_name
+          - name: played_games
+          - name: won
+          - name: draw
+          - name: lost
+          - name: points
+          - name: goals_for
+          - name: goals_against
+          - name: goal_difference
+          - name: form
+            description: "Last-5 form string provided by the API, e.g. W,W,D,L,W."

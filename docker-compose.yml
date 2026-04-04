@@ -1,0 +1,180 @@
+services:
+
+  # ─── Airflow metadata DB ────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ─── Airflow init (runs once, exits) ────────────────────────────────────────
+  airflow-init:
+    image: apache/airflow:2.9.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username admin
+          --firstname Admin
+          --lastname Admin
+          --role Admin
+          --email admin@football-analytics.local
+          --password $${AIRFLOW_ADMIN_PASSWORD}
+      "
+    restart: on-failure
+
+  # ─── Airflow webserver (UI on :8080) ────────────────────────────────────────
+  airflow-webserver:
+    image: apache/airflow:2.9.0
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+      - airflow_logs:/opt/airflow/logs
+    command: webserver
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # ─── Airflow scheduler ──────────────────────────────────────────────────────
+  airflow-scheduler:
+    image: apache/airflow:2.9.0
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    env_file: .env
+    environment:
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+    volumes:
+      - ./dags:/opt/airflow/dags:ro
+      - airflow_logs:/opt/airflow/logs
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$${HOSTNAME}\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  # ─── MinIO (object storage: raw/ and refined/) ──────────────────────────────
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"   # S3-compatible API
+      - "9001:9001"   # Web console
+    env_file: .env
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ─── MinIO init (creates raw/ and refined/ buckets, exits) ──────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    env_file: .env
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
+        mc mb --ignore-existing local/raw &&
+        mc mb --ignore-existing local/refined &&
+        echo 'Buckets ready: raw/, refined/'
+      "
+    restart: on-failure
+
+  # ─── ClickHouse (OLAP, host:8124→container:8123) ────────────────────────────
+  # Port 8124 (not 8123) avoids conflicts if another ClickHouse is already
+  # running on the host (e.g. another project).  dbt profiles.yml uses 8124.
+  # DAGs running inside Docker still reach it via clickhouse:8123 (service name).
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    ports:
+      - "8124:8123"   # HTTP interface (used by dbt + FastAPI from host)
+      - "9010:9000"   # Native TCP (optional; 9009 may be taken by another project)
+    env_file: .env
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./infra/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # ─── MLflow tracking server (:5001 on host) ─────────────────────────────────
+  # Port 5001 (not 5000) avoids conflict with macOS AirPlay Receiver which
+  # occupies :5000 by default. Container internally still uses 5000.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    ports:
+      - "5001:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:////mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  airflow_logs:
+  minio_data:
+  clickhouse_data:
+  mlflow_data:
