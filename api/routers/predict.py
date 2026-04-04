@@ -5,22 +5,35 @@ and serves probability predictions for a given home vs away fixture.
 
 If MLflow is unreachable the router refuses to start — predictions without a
 registered model would be silently wrong.  Set MLFLOW_TRACKING_URI in the
-environment (default: http://localhost:5000).
+environment (default: http://localhost:5001).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import sys
+import tempfile
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status
 
-import mlflow.pyfunc
+import mlflow.artifacts
+import mlflow.tracking
 
 from api.schemas.predict import PredictRequest, PredictResponse
+
+# Import the predictor class from the training script.
+# Resolve the project root so this works regardless of cwd.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from ml.scripts.train_poisson import PoissonPredictor  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -32,30 +45,44 @@ MODEL_ALIAS = "Production"
 # ── model loader ──────────────────────────────────────────────────────────────
 
 class _ModelState:
-    """Holds the loaded pyfunc model and its version string."""
+    """Holds the loaded PoissonPredictor and its MLflow version string."""
 
     def __init__(self) -> None:
-        self._model: mlflow.pyfunc.PyFuncModel | None = None
+        self._predictor: PoissonPredictor | None = None
         self._version: str = "unknown"
 
     def load(self) -> None:
-        """Load (or reload) the Production model from MLflow."""
+        """Download the team_params JSON from MLflow and initialise the predictor."""
         mlflow.set_tracking_uri(MLFLOW_URI)
-        uri = f"models:/{REGISTERED_MODEL}@{MODEL_ALIAS}"
-        log.info("Loading model from %s …", uri)
-        self._model = mlflow.pyfunc.load_model(uri)
-
-        # Extract the version for the response payload
         client = mlflow.tracking.MlflowClient(MLFLOW_URI)
-        versions = client.get_model_version_by_alias(REGISTERED_MODEL, MODEL_ALIAS)
-        self._version = versions.version
+
+        # Resolve version from alias
+        mv = client.get_model_version_by_alias(REGISTERED_MODEL, MODEL_ALIAS)
+        self._version = mv.version
+        run_id = mv.run_id
+        log.info("Loading model version %s (run %s) …", self._version, run_id)
+
+        # Download the JSON artifact that was logged under model/team_params.json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact_path = mlflow.artifacts.download_artifacts(
+                run_id=run_id,
+                artifact_path="model/team_params.json",
+                tracking_uri=MLFLOW_URI,
+                dst_path=tmpdir,
+            )
+            with open(artifact_path) as f:
+                params = json.load(f)
+
+        predictor = PoissonPredictor()
+        predictor._init_from_params(params)
+        self._predictor = predictor
         log.info("Model version %s loaded.", self._version)
 
     @property
-    def model(self) -> mlflow.pyfunc.PyFuncModel:
-        if self._model is None:
+    def predictor(self) -> PoissonPredictor:
+        if self._predictor is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        return self._model
+        return self._predictor
 
     @property
     def version(self) -> str:
@@ -115,7 +142,7 @@ def predict(
     }])
 
     try:
-        result = state.model.predict(input_df)
+        result = state.predictor.predict(None, input_df)
     except Exception as exc:
         log.exception("Prediction failed for %s vs %s", body.home_team_id, body.away_team_id)
         raise HTTPException(

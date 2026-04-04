@@ -2,7 +2,7 @@
 
 Data engineering and ML platform for LaLiga match prediction. Ingests data from external football APIs, transforms it through a dbt pipeline into ClickHouse, and will serve predictions via a FastAPI + React frontend.
 
-> **Status:** Phases 1–3 complete (infrastructure, ingestion, dbt). Phases 4–6 (ML, FastAPI, frontend) are planned but not yet implemented.
+> **Status:** Phases 1–4 complete (infrastructure, ingestion, dbt, ML + FastAPI predict endpoint). Phases 5–6 (remaining FastAPI routes, frontend) are planned.
 
 ---
 
@@ -16,8 +16,8 @@ football-data.org API
               └─► dbt staging → intermediate → marts
                     └─► ClickHouse football.*  (OLAP tables)
                           └─► FastAPI  ──► React dashboard  [planned]
-                                └─► /predict endpoint
-                                      └─► MLflow model registry  [planned]
+                                └─► POST /predict
+                                      └─► MLflow model registry
 ```
 
 ### Services
@@ -29,11 +29,11 @@ football-data.org API
 | `postgres` | postgres:15 | — | Airflow metadata DB (internal only) |
 | `minio` | minio/minio | **9000** (S3 API), **9001** (UI) | Object storage for raw Parquet files |
 | `clickhouse` | clickhouse-server:24.3 | **8124** (HTTP), 9010 (native TCP) | OLAP database; dbt reads/writes here |
-| `mlflow` | ghcr.io/mlflow/mlflow:v2.11.0 | **5000** | Experiment tracking and model registry |
+| `mlflow` | ghcr.io/mlflow/mlflow:v2.11.0 | **5001** | Experiment tracking and model registry |
 | `fastapi` | _not yet implemented_ | 8000 | Prediction and stats API |
 | `react` | _not yet implemented_ | 3000 | Dashboard frontend |
 
-> **Port note:** ClickHouse is exposed on **8124** (not the default 8123) to avoid conflicts if another ClickHouse instance is running on the host. Inside the Docker network, services still communicate on `clickhouse:8123`.
+> **Port notes:** ClickHouse is on **8124** (not 8123) to avoid conflicts with other ClickHouse instances. MLflow is on **5001** (not 5000) to avoid macOS AirPlay Receiver. Inside Docker, services communicate on `clickhouse:8123` and `mlflow:5000`.
 
 ---
 
@@ -71,8 +71,15 @@ football-analytics/
 ├── scripts/
 │   └── bootstrap_clickhouse.py  # Dev helper: load API data without Airflow
 │
-├── ml/                           # Planned: train_poisson.py, train_classifier.py
-├── api/                          # Planned: FastAPI app
+├── ml/
+│   └── scripts/
+│       └── train_poisson.py      # Poisson model training + MLflow registration
+├── api/
+│   ├── main.py                   # FastAPI app setup, CORS, lifespan
+│   ├── routers/
+│   │   └── predict.py            # POST /predict endpoint
+│   └── schemas/
+│       └── predict.py            # PredictRequest / PredictResponse
 ├── frontend/                     # Planned: React + TypeScript dashboard
 │
 ├── docs/
@@ -130,9 +137,9 @@ cp .env.example .env
 | `AIRFLOW__CORE__FERNET_KEY` | Airflow | Encryption key for secrets |
 | `AIRFLOW__WEBSERVER__SECRET_KEY` | Airflow webserver | Session key |
 | `AIRFLOW_ADMIN_PASSWORD` | Airflow init | Password for the `admin` UI user |
-| `MLFLOW_TRACKING_URI` | ML scripts (planned) | `http://mlflow:5000` |
+| `MLFLOW_TRACKING_URI` | DAGs, ML scripts | `http://mlflow:5000` (Docker-internal); host scripts use `http://localhost:5001` |
 
-> **Note:** `CLICKHOUSE_HOST=clickhouse` is the Docker service name used by DAGs running inside the container network. Host-side tools (dbt, bootstrap script) connect via `localhost:8124`.
+> **Note:** `CLICKHOUSE_HOST=clickhouse` and `MLFLOW_TRACKING_URI=http://mlflow:5000` are Docker-internal addresses for DAGs running inside the container network. Host-side tools (dbt, train script, API) use `localhost:8124` and `localhost:5001` respectively.
 
 ---
 
@@ -262,20 +269,82 @@ make dbt-docs     # generate + serve docs at http://localhost:8080
 
 ---
 
-## ML models (planned — Phase 4)
+## ML model — Poisson predictor
 
-Two models are specified in `docs/ml-model.md`:
+**Level 1 — Poisson model** (`ml/scripts/train_poisson.py`)
 
-**Level 1 — Poisson model** (`ml/scripts/train_poisson.py`, not yet created)
-- Features: `attack_strength`, `defence_weakness`, `home_advantage` (~1.2)
-- Output: P(home win), P(draw), P(away win)
+Goals scored by each side are modelled as independent Poisson random variables:
 
-**Level 2 — XGBoost classifier** (`ml/scripts/train_classifier.py`, not yet created)
+```
+λ_home = home_attack × away_defence × HOME_ADVANTAGE(1.2) × league_avg_goals
+λ_away = away_attack × home_defence × league_avg_goals
+```
+
+P(H/D/A) is computed by summing the joint PMF over an 11×11 goal grid (0–10 goals).
+
+Training reads from `mart_team_stats` and `mart_match_features`. Metrics are logged to MLflow and the model artifact is registered as `poisson-match-predictor` with the `Production` alias.
+
+```bash
+# Retrain (requires MLflow + ClickHouse running)
+venv/bin/python ml/scripts/train_poisson.py
+# Optional flags: --ch-host, --ch-port, --mlflow-uri
+```
+
+**Current performance on 293 LaLiga matches:**
+| Metric | Value |
+|---|---|
+| Accuracy | 54.6% |
+| Baseline (always home win) | 48.8% |
+| Baseline (most frequent) | 48.8% |
+
+MLflow UI: **http://localhost:5001** · Experiment: `football-match-prediction`
+
+**Level 2 — XGBoost classifier** (`ml/scripts/train_classifier.py`, planned)
 - Target: `result ∈ {H, D, A}`
-- Input: columns from `mart_match_features` — `home_form_5`, `away_form_5`, `home_attack_strength`, `away_defence_weakness`, `h2h_home_win_rate`, `home_rest_days`, `away_rest_days`, `position_diff`
-- Baseline to beat: ~48% accuracy ("predict most frequent result"); target: >52%
+- Input features from `mart_match_features`: form, attack/defence strength, h2h win rate, rest days, position diff
 
-MLflow tracking URI: `http://localhost:5000`. Experiment name: `football-match-prediction`.
+---
+
+## API
+
+### Start the API server
+
+```bash
+venv/bin/uvicorn api.main:app --reload --port 8000
+```
+
+The server loads the `Production` model from MLflow at startup. If MLflow is unreachable it will refuse to start.
+
+### Endpoints
+
+#### `GET /health`
+```json
+{"status": "ok"}
+```
+
+#### `POST /predict`
+Predict outcome probabilities for a LaLiga fixture.
+
+Request:
+```json
+{"home_team_id": 86, "away_team_id": 81}
+```
+
+Response:
+```json
+{
+  "home_team_id": 86,
+  "away_team_id": 81,
+  "home_win": 0.5831,
+  "draw": 0.2574,
+  "away_win": 0.1595,
+  "expected_home_goals": 1.526,
+  "expected_away_goals": 0.657,
+  "model_version": "1"
+}
+```
+
+Team IDs are `football-data.org` identifiers. Unknown team IDs fall back to league-average strength (graceful degradation, no error).
 
 ---
 
@@ -290,6 +359,19 @@ make dbt-compile  Compile models (no DB writes)
 make dbt-run      Run all dbt models
 make dbt-test     Run all 58 dbt data quality tests
 make dbt-docs     Generate and serve dbt documentation
+```
+
+### Full pipeline (dev)
+
+```bash
+make up                                   # 1. start stack
+make bootstrap                            # 2. seed data
+make dbt-run && make dbt-test             # 3. build mart tables
+venv/bin/python ml/scripts/train_poisson.py  # 4. train + register model
+venv/bin/uvicorn api.main:app --port 8000    # 5. start API
+curl -X POST http://localhost:8000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"home_team_id": 86, "away_team_id": 81}'
 ```
 
 ---
@@ -347,10 +429,10 @@ If the count is low (< 5 matches), there is not enough history for form calculat
 | **Data coverage** | Only LaLiga (competition code `PD`) is ingested. Other leagues require adding DAGs. |
 | **API rate limit** | football-data.org free tier: 10 req/min. The bootstrap script adds a 7 s delay between calls. Burst usage can trigger 429 errors. |
 | **Standings source** | `mart_standings` is derived from match results, not from the standings API snapshot. It will differ slightly from the official table if points deductions or administrative decisions exist. |
-| **No ML yet** | `mart_match_features` is populated and tested, but the training scripts (`ml/scripts/`) do not exist yet. |
-| **No API or frontend** | `api/` and `frontend/` directories are empty stubs. FastAPI and React are planned for Phases 5–6. |
+| **XGBoost not yet trained** | `mart_match_features` is ready but `ml/scripts/train_classifier.py` is not yet implemented. |
+| **No frontend** | `frontend/` is an empty stub. React dashboard is planned for Phase 6. |
 | **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` installs packages on every container start (~2 min on first run). Consider building a custom image for faster restarts. |
-| **MLflow local storage** | MLflow uses a local SQLite file and local artifact directory. Not suitable for multi-user or production use without switching to a shared backend. |
+| **MLflow local storage** | MLflow uses SQLite + local artifacts (served via `--serve-artifacts`). Not suitable for multi-user or production use without switching to a shared backend. |
 | **ClickHouse MergeTree dedup** | Raw tables use `ReplacingMergeTree`. Deduplication happens asynchronously during background merges, not immediately on insert. Use `FINAL` keyword in queries if exact dedup is needed. |
 | **dbt ORDER BY bug (ClickHouse 24.3)** | `mart_match_features` uses `ORDER BY tuple()` because naming any column that appears in a window function ORDER BY inside a referenced view causes `UNKNOWN_IDENTIFIER` during DDL. |
 
@@ -362,6 +444,6 @@ See `docs/progress.md` for the detailed checklist. Remaining work:
 
 - **Phase 2:** `dags/ingest_scorers.py`, `dags/ingest_advanced_stats.py` (API-Football)
 - **Phase 3:** `staging/stg_goals.sql`, `intermediate/int_h2h.sql`; configure Airflow connections in UI
-- **Phase 4:** Poisson and XGBoost training scripts, MLflow integration, weekly retrain DAG
-- **Phase 5:** FastAPI — `/standings`, `/teams`, `/predict` endpoints
+- **Phase 4 (partial):** XGBoost training script (`train_classifier.py`), weekly retrain DAG
+- **Phase 5:** FastAPI — `/standings`, `/teams` endpoints
 - **Phase 6:** React dashboard — standings table, form widget, match prediction, xG chart

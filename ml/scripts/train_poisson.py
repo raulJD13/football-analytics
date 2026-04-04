@@ -395,10 +395,15 @@ def _parse_args() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
-    # Load .env if python-dotenv is available
+    # Load .env — but remove Docker-internal URIs so the CLI defaults (localhost)
+    # are used when running from the host.
     try:
+        import os as _os
         from dotenv import load_dotenv
         load_dotenv()
+        # .env sets MLFLOW_TRACKING_URI=http://mlflow:5000 (Docker-internal).
+        # Host scripts must use localhost:5001 instead; let --mlflow-uri control it.
+        _os.environ.pop("MLFLOW_TRACKING_URI", None)
     except ImportError:
         pass
 

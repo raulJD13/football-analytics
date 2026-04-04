@@ -25,17 +25,17 @@
 - [x] Tests de calidad en todos los modelos
 
 ## Phase 4 — ML
-- [ ] ml/scripts/train_poisson.py
+- [x] ml/scripts/train_poisson.py
 - [ ] ml/scripts/train_classifier.py
-- [ ] MLflow tracking integrado
+- [x] MLflow tracking integrado
 - [ ] dags/retrain_model.py (semanal)
-- [ ] api/routers/predict.py
+- [x] api/routers/predict.py
 
 ## Phase 5 — FastAPI
-- [ ] api/main.py
+- [x] api/main.py
 - [ ] api/routers/standings.py
 - [ ] api/routers/teams.py
-- [ ] api/routers/predict.py
+- [x] api/routers/predict.py
 
 ## Phase 6 — Frontend
 - [ ] Dashboard clasificación actual vs proyectada

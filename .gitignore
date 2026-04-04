@@ -11,3 +11,4 @@ ml/models/*.joblib
 *.egg-info/
 .DS_Store
 .env.example
+venv/
