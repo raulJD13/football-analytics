@@ -38,7 +38,11 @@
 - [x] api/routers/predict.py
 
 ## Phase 6 — Frontend
-- [ ] Dashboard clasificación actual vs proyectada
-- [ ] Tabla forma reciente por equipo
-- [ ] Widget predicción partido (home vs away)
-- [ ] Gráfico xG acumulado por equipo
+- [x] Layout global (Sidebar + Topbar, dark theme)
+- [x] /overview — KPIs + top matchup predictions + standings snapshot
+- [x] /fixtures — simulated fixture predictions grid
+- [x] /predictions — team selector dropdowns + POST /predict + animated bars
+- [x] /standings — full table with FormDots + projected points
+- [x] /teams/[id] — home vs away cards + last 10 matches + strength metrics
+- [x] /model — accuracy/brier/log-loss KPIs + feature importance chart
+- [ ] Gráfico xG acumulado por equipo (requires xG data from API-Football)
