@@ -17,6 +17,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers.predict import lifespan, router as predict_router
+from api.routers.standings import router as standings_router
+from api.routers.teams import router as teams_router
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 
@@ -35,6 +37,8 @@ app.add_middleware(
 )
 
 app.include_router(predict_router)
+app.include_router(standings_router)
+app.include_router(teams_router)
 
 
 @app.get("/health", tags=["ops"])

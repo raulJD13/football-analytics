@@ -33,8 +33,8 @@
 
 ## Phase 5 — FastAPI
 - [x] api/main.py
-- [ ] api/routers/standings.py
-- [ ] api/routers/teams.py
+- [x] api/routers/standings.py
+- [x] api/routers/teams.py
 - [x] api/routers/predict.py
 
 ## Phase 6 — Frontend
