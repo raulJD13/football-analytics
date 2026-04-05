@@ -11,10 +11,13 @@ const nextConfig: NextConfig = {
   // every useEffect data fetch before it can update state.
 
   async rewrites() {
+    // In Docker the API container is reachable via service name (API_INTERNAL_URL).
+    // Locally it runs on host port 8001.
+    const apiUrl = process.env.API_INTERNAL_URL ?? "http://localhost:8001";
     return [
       {
         source: "/api/:path*",
-        destination: "http://localhost:8001/:path*",
+        destination: `${apiUrl}/:path*`,
       },
     ];
   },

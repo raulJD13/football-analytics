@@ -3,9 +3,9 @@ football_analytics:
   outputs:
     dev:
       type: clickhouse
-      schema: football
-      host: localhost
-      port: 8124
+      schema: "{{ env_var('CLICKHOUSE_DB', 'football') }}"
+      host: "{{ env_var('CLICKHOUSE_HOST', 'localhost') }}"
+      port: "{{ env_var('CLICKHOUSE_PORT', '8124') | int }}"
       user: default
       password: ""
       secure: false

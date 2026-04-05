@@ -1,0 +1,24 @@
+# FastAPI + server
+fastapi==0.135.3
+uvicorn[standard]==0.43.0
+starlette==1.0.0
+
+# Data / ML
+pandas==2.3.3
+numpy==2.4.4
+scipy==1.17.1
+pyarrow==19.0.1
+
+# ClickHouse
+clickhouse-connect==0.15.1
+
+# MLflow (skinny = no heavy ML deps; still includes tracking + model registry)
+mlflow==3.10.1
+
+# dbt
+dbt-clickhouse==1.10.0
+
+# Ingestion helpers
+requests==2.32.3
+boto3==1.38.8
+python-dotenv==1.2.2
