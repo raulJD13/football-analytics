@@ -45,9 +45,17 @@ def _api_get(path: str, api_key: str) -> dict:
 
 # ── data fetchers / transformers ──────────────────────────────────────────────
 
-def fetch_matches(api_key: str) -> list[list]:
-    """Return rows for raw_matches."""
-    data = _api_get(f"/competitions/{LALIGA_CODE}/matches", api_key)
+def fetch_matches(api_key: str, season: int | None = None) -> list[list]:
+    """Return rows for raw_matches.
+
+    Args:
+        season: Start year of the season (e.g. 2023 for 2023/24).
+                None → current season (API default).
+    """
+    path = f"/competitions/{LALIGA_CODE}/matches"
+    if season is not None:
+        path += f"?season={season}"
+    data = _api_get(path, api_key)
     matches = data.get("matches", [])
     rows = []
     for m in matches:
@@ -81,9 +89,16 @@ MATCHES_COLUMNS = [
 ]
 
 
-def fetch_standings(api_key: str) -> list[list]:
-    """Return rows for raw_standings (TOTAL table only)."""
-    data = _api_get(f"/competitions/{LALIGA_CODE}/standings", api_key)
+def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
+    """Return rows for raw_standings (TOTAL table only).
+
+    Args:
+        season: Start year of the season. None → current season.
+    """
+    path = f"/competitions/{LALIGA_CODE}/standings"
+    if season is not None:
+        path += f"?season={season}"
+    data = _api_get(path, api_key)
     groups = data.get("standings", [])
     table = next((g["table"] for g in groups if g["type"] == "TOTAL"), [])
     rows = []
@@ -126,10 +141,21 @@ def main() -> None:
         pass
 
     parser = argparse.ArgumentParser(description="Bootstrap ClickHouse raw tables.")
-    # CLICKHOUSE_HOST in .env is the Docker service name — use localhost for host scripts
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=int(os.getenv("CLICKHOUSE_PORT", "8124")))
     parser.add_argument("--db", default=os.getenv("CLICKHOUSE_DB", "football"))
+    parser.add_argument(
+        "--seasons",
+        nargs="+",
+        type=int,
+        default=None,
+        metavar="YYYY",
+        help=(
+            "Season start years to ingest (e.g. --seasons 2023 2024 2025). "
+            "Omit for current season only. "
+            "Rate limit: 10 req/min → 7 s sleep between requests."
+        ),
+    )
     args = parser.parse_args()
 
     api_key = os.getenv("FOOTBALL_API_KEY")
@@ -141,25 +167,53 @@ def main() -> None:
     client = clickhouse_connect.get_client(
         host=args.host, port=args.port, database=args.db
     )
-    # Verify connection
     client.ping()
     log.info("ClickHouse connection OK")
 
-    # ── matches ───────────────────────────────────────────────────────────────
-    match_rows = fetch_matches(api_key)
-    client.insert("raw_matches", match_rows, column_names=MATCHES_COLUMNS)
-    log.info("Inserted %d rows into raw_matches", len(match_rows))
+    seasons: list[int | None] = [None] if not args.seasons else [int(s) for s in args.seasons]
+    log.info("Seasons to ingest: %s", seasons)
 
-    # Respect free-tier rate limit (10 req/min) before second call
-    log.info("Sleeping 7 s to respect API rate limit …")
-    time.sleep(7)
+    total_matches = 0
+    total_standings = 0
 
-    # ── standings ─────────────────────────────────────────────────────────────
-    standing_rows = fetch_standings(api_key)
-    client.insert("raw_standings", standing_rows, column_names=STANDINGS_COLUMNS)
-    log.info("Inserted %d rows into raw_standings", len(standing_rows))
+    for i, season in enumerate(seasons):
+        season_label = str(season) if season else "current"
+        log.info("─── Season %s (%d/%d) ───", season_label, i + 1, len(seasons))
 
-    log.info("Bootstrap complete. Run `make dbt-run && make dbt-test`.")
+        # ── matches ───────────────────────────────────────────────────────────
+        match_rows = fetch_matches(api_key, season)
+        client.insert("raw_matches", match_rows, column_names=MATCHES_COLUMNS)
+        log.info("  Inserted %d rows into raw_matches (season %s)", len(match_rows), season_label)
+        total_matches += len(match_rows)
+
+        # Rate limit: 10 req/min on free tier
+        log.info("  Sleeping 7 s (rate limit) …")
+        time.sleep(7)
+
+        # ── standings (final snapshot for this season) ────────────────────────
+        standing_rows = fetch_standings(api_key, season)
+        client.insert("raw_standings", standing_rows, column_names=STANDINGS_COLUMNS)
+        log.info("  Inserted %d rows into raw_standings (season %s)", len(standing_rows), season_label)
+        total_standings += len(standing_rows)
+
+        # Sleep between seasons (except after the last one)
+        if i < len(seasons) - 1:
+            log.info("  Sleeping 7 s before next season …")
+            time.sleep(7)
+
+    # ── deduplicate (ReplacingMergeTree merges on OPTIMIZE) ──────────────────
+    log.info("Running OPTIMIZE TABLE to apply ReplacingMergeTree deduplication …")
+    client.command("OPTIMIZE TABLE raw_matches FINAL")
+    client.command("OPTIMIZE TABLE raw_standings FINAL")
+
+    # ── summary ───────────────────────────────────────────────────────────────
+    final_count = client.query_df("SELECT count() as n FROM raw_matches").iloc[0]["n"]
+    log.info(
+        "Bootstrap complete — inserted %d match rows across %d season(s). "
+        "Deduplicated total: %d rows in raw_matches.",
+        total_matches, len(seasons), final_count,
+    )
+    log.info("Next: dbt run && dbt test, then retrain models.")
 
 
 if __name__ == "__main__":

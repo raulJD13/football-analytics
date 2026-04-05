@@ -1,39 +1,98 @@
 # Football Analytics
 
-Data engineering and ML platform for LaLiga match prediction. Ingests data from external football APIs, transforms it through a dbt pipeline into ClickHouse, and will serve predictions via a FastAPI + React frontend.
+Data engineering and ML platform for LaLiga match prediction. Three seasons of historical data flow from football-data.org through a dbt pipeline into ClickHouse, powering a Poisson + XGBoost ensemble served via FastAPI and a React dashboard.
 
-> **Status:** Phases 1–4 complete (infrastructure, ingestion, dbt, ML + FastAPI predict endpoint). Phases 5–6 (remaining FastAPI routes, frontend) are planned.
+> **Status:** All six phases complete. Single-command deployment via Docker Compose. Out-of-sample XGBoost accuracy: **64.3%** vs 48.8% home-win baseline.
 
 ---
 
 ## Architecture
 
 ```
-football-data.org API
-  └─► Airflow DAG (daily 02:00)
-        ├─► MinIO raw/  (Parquet, partitioned by date)  ← archive
-        └─► ClickHouse football.raw_*  ← source for dbt
-              └─► dbt staging → intermediate → marts
-                    └─► ClickHouse football.*  (OLAP tables)
-                          └─► FastAPI  ──► React dashboard  [planned]
-                                └─► POST /predict
-                                      └─► MLflow model registry
+football-data.org API  (3 seasons: 2023/24 · 2024/25 · 2025/26)
+  └─► Airflow DAG (daily 02:00 UTC)
+        ├─► MinIO  raw/   (Parquet archive, partitioned by date)
+        └─► ClickHouse  football.raw_*
+              └─► dbt  staging → intermediate → marts
+                    └─► ClickHouse  football.mart_*  (OLAP)
+                          └─► FastAPI  (port 8001)
+                                ├─► POST /predict  ──► MLflow ensemble registry
+                                ├─► GET  /standings
+                                └─► GET  /teams/{id}/stats · /form
+                                          └─► Next.js dashboard  (port 3001)
 ```
 
-### Services
+---
+
+## Services
 
 | Service | Image | Host port | Purpose |
 |---|---|---|---|
-| `airflow-webserver` | apache/airflow:2.9.0 | **8080** | DAG UI and triggering |
+| `airflow-webserver` | apache/airflow:2.9.0 | **8080** | DAG UI |
 | `airflow-scheduler` | apache/airflow:2.9.0 | — | Runs DAGs on schedule |
-| `postgres` | postgres:15 | — | Airflow metadata DB (internal only) |
-| `minio` | minio/minio | **9000** (S3 API), **9001** (UI) | Object storage for raw Parquet files |
-| `clickhouse` | clickhouse-server:24.3 | **8124** (HTTP), 9010 (native TCP) | OLAP database; dbt reads/writes here |
-| `mlflow` | ghcr.io/mlflow/mlflow:v2.11.0 | **5001** | Experiment tracking and model registry |
-| `fastapi` | _not yet implemented_ | 8000 | Prediction and stats API |
-| `react` | _not yet implemented_ | 3000 | Dashboard frontend |
+| `postgres` | postgres:15 | — | Airflow metadata DB |
+| `minio` | minio/minio | **9000** (S3), **9001** (UI) | Raw Parquet archive |
+| `clickhouse` | clickhouse-server:24.3 | **8124** (HTTP) | OLAP database |
+| `mlflow` | ghcr.io/mlflow/mlflow:v2.11.0 | **5001** | Experiment tracking + model registry |
+| `db-init` | _(project image)_ | — | One-shot: bootstrap data + dbt run |
+| `trainer` | _(project image)_ | — | One-shot: train Poisson + XGBoost + ensemble |
+| `api` | _(project image)_ | **8001** | FastAPI prediction and stats API |
+| `frontend` | _(Node 20)_ | **3001** | Next.js React dashboard |
 
-> **Port notes:** ClickHouse is on **8124** (not 8123) to avoid conflicts with other ClickHouse instances. MLflow is on **5001** (not 5000) to avoid macOS AirPlay Receiver. Inside Docker, services communicate on `clickhouse:8123` and `mlflow:5000`.
+> **Port notes:** ClickHouse on **8124** (not 8123) and MLflow on **5001** (not 5000) avoid common host conflicts. Inside Docker, services communicate on `clickhouse:8123` and `mlflow:5000`.
+
+---
+
+## Quick start — single command
+
+```bash
+cp .env.example .env          # fill in FOOTBALL_API_KEY at minimum
+docker compose up -d
+```
+
+Docker Compose runs the services in dependency order:
+
+1. Infrastructure (ClickHouse, MLflow, MinIO) starts and becomes healthy
+2. `db-init` bootstraps ClickHouse with 3 seasons of data and runs `dbt run && dbt test`
+3. `trainer` trains Poisson → XGBoost → ensemble and registers all three in MLflow
+4. `api` starts and loads the ensemble from MLflow
+5. `frontend` builds and starts Next.js
+
+Open **http://localhost:3001** once all services are healthy (~3–5 min on first run).
+
+---
+
+## Local development setup
+
+```bash
+# Python environment
+python3.12 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# macOS only — XGBoost needs OpenMP
+brew install libomp
+
+# Start infrastructure only (skip api/frontend containers)
+docker compose up -d clickhouse mlflow minio airflow-webserver airflow-scheduler postgres
+
+# Seed data (3 seasons)
+python scripts/bootstrap_clickhouse.py --seasons 2023 2024 2025
+
+# Transform
+cd dbt && dbt run && dbt test
+
+# Train
+python ml/scripts/train_poisson.py
+python ml/scripts/train_classifier.py
+python ml/scripts/ensemble.py
+
+# API
+PYTHONPATH=. uvicorn api.main:app --port 8001 --reload
+
+# Frontend
+cd frontend && npm install && npm run dev    # http://localhost:3001
+```
 
 ---
 
@@ -41,409 +100,340 @@ football-data.org API
 
 ```
 football-analytics/
-├── dags/                         # Airflow DAGs
-│   ├── ingest_matches.py         # LaLiga matches → MinIO + ClickHouse
-│   └── ingest_standings.py       # LaLiga standings → MinIO + ClickHouse
+├── dags/                              # Airflow DAGs
+│   ├── ingest_matches.py              # LaLiga matches → MinIO + ClickHouse
+│   └── ingest_standings.py            # LaLiga standings → MinIO + ClickHouse
 │
-├── dbt/                          # dbt project (run all commands from here)
-│   ├── dbt_project.yml
-│   ├── profiles.yml              # ClickHouse connection (localhost:8124)
+├── dbt/                               # dbt project
+│   ├── profiles.yml                   # Reads CLICKHOUSE_HOST/PORT/DB from env
 │   └── models/
-│       ├── staging/              # Cast + rename only; materialized as views
-│       │   ├── sources.yml       # Declares raw_matches, raw_standings sources
-│       │   ├── stg_matches.sql
-│       │   ├── stg_teams.sql
-│       │   └── schema.yml
-│       ├── intermediate/         # Business logic; materialized as views
-│       │   ├── int_team_match_results.sql  # Unpivots to 1 row/team/match
-│       │   ├── int_form_last_5.sql         # Rolling form (5 prev matches)
-│       │   └── schema.yml
-│       └── marts/                # Final tables; MergeTree in ClickHouse
-│           ├── mart_standings.sql
-│           ├── mart_team_stats.sql         # Home vs away split + strength metrics
-│           ├── mart_match_features.sql     # ML feature table
-│           └── schema.yml
-│
-├── infra/
-│   └── clickhouse/
-│       └── init.sql              # DDL: creates football DB + raw_* tables on first start
-│
-├── scripts/
-│   └── bootstrap_clickhouse.py  # Dev helper: load API data without Airflow
+│       ├── staging/                   # Cast + rename only (views)
+│       │   ├── stg_matches.sql        # Finished matches, ISO dates parsed
+│       │   └── stg_teams.sql          # Unique teams from match participants
+│       ├── intermediate/              # Business logic (views)
+│       │   ├── int_team_match_results.sql   # 1 row per team per match (W/D/L, pts)
+│       │   └── int_form_last_5.sql          # Rolling form, no data leakage
+│       └── marts/                     # Final tables (MergeTree)
+│           ├── mart_standings.sql           # Current season table
+│           ├── mart_team_stats.sql          # Home/away stats + strength ratios
+│           └── mart_match_features.sql      # ML feature table (all features pre-joined)
 │
 ├── ml/
 │   └── scripts/
-│       └── train_poisson.py      # Poisson model training + MLflow registration
+│       ├── train_poisson.py           # Poisson model: team strengths → P(H/D/A)
+│       ├── train_classifier.py        # XGBoost: TimeSeriesSplit CV, 10 features
+│       └── ensemble.py                # Weight grid search; registers best combo
+│
 ├── api/
-│   ├── main.py                   # FastAPI app setup, CORS, lifespan
+│   ├── main.py                        # FastAPI app, CORS, lifespan
 │   ├── routers/
-│   │   └── predict.py            # POST /predict endpoint
-│   └── schemas/
-│       └── predict.py            # PredictRequest / PredictResponse
-├── frontend/                     # Planned: React + TypeScript dashboard
+│   │   ├── predict.py                 # POST /predict  (ensemble or Poisson fallback)
+│   │   ├── standings.py               # GET  /standings
+│   │   └── teams.py                   # GET  /teams/{id}/stats · /form
+│   ├── schemas/                       # Pydantic request/response models
+│   └── db/
+│       ├── clickhouse.py              # Client factory (reads env vars)
+│       ├── standings.py               # ClickHouse queries for standings
+│       ├── teams.py                   # ClickHouse queries for team stats/form
+│       └── predict_features.py        # Live feature assembly for XGBoost at inference
+│
+├── frontend/                          # Next.js 16 + TypeScript + Tailwind v4
+│   ├── app/
+│   │   ├── overview/                  # KPIs + top predictions + standings snapshot
+│   │   ├── fixtures/                  # Simulated fixture prediction grid
+│   │   ├── predictions/               # Team selector + POST /predict + animated bars
+│   │   ├── standings/                 # Full table with form dots + projected points
+│   │   ├── teams/[id]/                # Home/away stat cards + last 10 matches
+│   │   └── model/                     # Accuracy/Brier/log-loss KPIs + feature chart
+│   └── Dockerfile                     # Multi-stage build: deps → build → runner
+│
+├── scripts/
+│   └── bootstrap_clickhouse.py        # Load 1–3 seasons from API without Airflow
+│
+├── infra/
+│   └── clickhouse/
+│       └── init.sql                   # DDL: football DB + raw_* tables (ReplacingMergeTree)
 │
 ├── docs/
 │   ├── architecture.md
-│   ├── api-reference.md          # football-data.org + API-Football endpoints
+│   ├── api-reference.md               # football-data.org + API-Football endpoints
 │   ├── dbt-conventions.md
-│   ├── ml-model.md               # Poisson + XGBoost feature spec
-│   └── progress.md               # Phase checklist
+│   ├── ml-model.md                    # Model features, training logic, MLflow setup
+│   └── progress.md                    # Phase checklist
 │
-├── docker-compose.yml
-├── .env                          # Local secrets (gitignored)
-├── .env.example                  # Template
-├── Makefile                      # Convenience wrappers (see below)
-└── venv/                         # Python virtual environment
-```
-
----
-
-## External APIs
-
-### football-data.org (primary)
-- **Auth:** `X-Auth-Token` header → `FOOTBALL_API_KEY`
-- **Rate limit:** 10 req/min on the free tier
-- **Used for:**
-  - `GET /competitions/PD/matches` — all LaLiga matches (current season)
-  - `GET /competitions/PD/standings` — current classification table
-  - `GET /competitions/PD/scorers` — top scorers _(DAG planned)_
-- Competition codes: `PD` = LaLiga, `PL` = Premier League, `BL1` = Bundesliga, `SA` = Serie A
-
-### API-Football (advanced stats, planned)
-- **Auth:** `x-apisports-key` header → `API_FOOTBALL_KEY`
-- **Rate limit:** 100 req/day on the free tier
-- **Planned for:** shots, possession stats per fixture
-
----
-
-## Environment variables
-
-Copy `.env.example` to `.env` and fill in real values before starting:
-
-```bash
-cp .env.example .env
-```
-
-| Variable | Used by | Description |
-|---|---|---|
-| `FOOTBALL_API_KEY` | Airflow DAGs, bootstrap script | football-data.org API token |
-| `API_FOOTBALL_KEY` | Planned DAGs | api-sports.io token |
-| `MINIO_ROOT_USER` | MinIO, DAGs | MinIO admin username |
-| `MINIO_ROOT_PASSWORD` | MinIO, DAGs | MinIO admin password |
-| `MINIO_ENDPOINT` | DAGs (inside Docker) | `http://minio:9000` |
-| `CLICKHOUSE_HOST` | DAGs (inside Docker) | `clickhouse` (service name) |
-| `CLICKHOUSE_PORT` | Host-side tools | `8124` (host-mapped port) |
-| `CLICKHOUSE_DB` | DAGs, ClickHouse init | `football` |
-| `AIRFLOW__CORE__FERNET_KEY` | Airflow | Encryption key for secrets |
-| `AIRFLOW__WEBSERVER__SECRET_KEY` | Airflow webserver | Session key |
-| `AIRFLOW_ADMIN_PASSWORD` | Airflow init | Password for the `admin` UI user |
-| `MLFLOW_TRACKING_URI` | DAGs, ML scripts | `http://mlflow:5000` (Docker-internal); host scripts use `http://localhost:5001` |
-
-> **Note:** `CLICKHOUSE_HOST=clickhouse` and `MLFLOW_TRACKING_URI=http://mlflow:5000` are Docker-internal addresses for DAGs running inside the container network. Host-side tools (dbt, train script, API) use `localhost:8124` and `localhost:5001` respectively.
-
----
-
-## Local setup
-
-### Prerequisites
-- Docker Desktop (or Docker Engine + Compose v2)
-- Python 3.11+
-- `make`
-
-### One-time setup
-
-```bash
-# 1. Clone and enter the project
-git clone <repo-url>
-cd football-analytics
-
-# 2. Create Python venv and install dependencies
-python3.12 -m venv venv
-source venv/bin/activate
-pip install dbt-clickhouse clickhouse-connect requests pandas pyarrow python-dotenv
-
-# 3. Copy and fill in secrets
-cp .env.example .env
-# Edit .env: set FOOTBALL_API_KEY at minimum
-```
-
----
-
-## Running the stack
-
-### Start everything
-
-```bash
-make up
-# or: docker compose up -d
-```
-
-This starts all services in dependency order. `airflow-init` runs migrations and creates the `admin` user, then exits. `minio-init` creates the `raw/` and `refined/` buckets, then exits. ClickHouse runs `infra/clickhouse/init.sql` on first start to create the `football` database and raw tables.
-
-Allow ~60 s for Airflow to become healthy. Check status:
-
-```bash
-docker compose ps
-```
-
-### Stop
-
-```bash
-make down
-# or: docker compose down
+├── Dockerfile                         # Python image for api / db-init / trainer
+├── docker-compose.yml                 # Full stack (single command deploy)
+├── requirements.txt                   # All Python deps (pinned)
+├── .env.example                       # Secrets template
+└── Makefile                           # Convenience wrappers
 ```
 
 ---
 
 ## Data pipeline
 
-### Step 1 — Seed initial data (dev only)
+### Seasons available
 
-On a fresh install, the ClickHouse raw tables are empty. Use the bootstrap script to load the current season data directly from the API, bypassing Airflow:
+football-data.org free tier gives access to the **3 most recent seasons** of LaLiga (PD):
 
-```bash
-make bootstrap
-# or: source venv/bin/activate && python scripts/bootstrap_clickhouse.py
-```
-
-This fetches ~380 matches and 20 standings rows and inserts them into `football.raw_matches` / `football.raw_standings`. Respects the API rate limit with a 7 s pause between calls.
-
-### Step 2 — Run dbt transformations
+| `--seasons` arg | Season | Matches |
+|---|---|---|
+| `2023` | 2023/24 | 380 |
+| `2024` | 2024/25 | 380 |
+| `2025` | 2025/26 (current) | 380 (293 finished as of April 2026) |
 
 ```bash
-make dbt-run    # creates 7 models: 4 views + 3 MergeTree tables
-make dbt-test   # runs 58 data quality tests
+# Add a new season (e.g. after the window opens each August):
+python scripts/bootstrap_clickhouse.py --seasons 2025
+# ReplacingMergeTree deduplicates on match_id automatically
 ```
 
-All commands run from the project root. The Makefile automatically changes to the `dbt/` subdirectory (where `dbt_project.yml` and `profiles.yml` live).
-
-### Step 3 — Trigger Airflow DAGs (ongoing)
-
-After the stack is up, open the Airflow UI at **http://localhost:8080** (user: `admin`, password: value of `AIRFLOW_ADMIN_PASSWORD` in `.env`, default `admin`).
-
-Enable and trigger:
-- `ingest_matches` — fetches all LaLiga matches for the current season
-- `ingest_standings` — fetches the current classification table
-
-Both DAGs run daily at 02:00 UTC. Each DAG:
-1. Fetches data from football-data.org
-2. Writes a Parquet snapshot to MinIO at `raw/{source}/{YYYY-MM-DD}/data.parquet`
-3. Inserts rows into the ClickHouse raw table
-
-After a DAG run, re-run dbt to refresh the marts:
-
-```bash
-make dbt-run && make dbt-test
-```
-
----
-
-## dbt models
+### dbt models
 
 | Layer | Model | Materialization | Description |
 |---|---|---|---|
-| staging | `stg_matches` | view | Finished matches only; ISO 8601 dates parsed with `parseDateTimeBestEffort` |
-| staging | `stg_teams` | view | Unique teams derived from match participants |
-| intermediate | `int_team_match_results` | view | Unpivots matches → 1 row per team per match with W/D/L and points |
-| intermediate | `int_form_last_5` | view | Rolling 5-match form using `ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING` (no data leakage) |
-| mart | `mart_standings` | MergeTree table | Current season standings computed from match results |
-| mart | `mart_team_stats` | MergeTree table | Home/away stats split + attack strength and defence weakness ratios |
-| mart | `mart_match_features` | MergeTree table | One row per match with all ML features pre-joined |
-
-### ClickHouse-specific conventions
-
-- Use `toDate(parseDateTimeBestEffort(col))` for ISO 8601 datetime strings from the API (not plain `toDate()`)
-- Use `toFloat64()` for decimal metrics
-- MergeTree `ORDER BY` must use non-nullable columns; avoid column names that also appear in window function `ORDER BY` clauses inside referenced views (ClickHouse 24.3 DDL resolution bug)
-- See `docs/dbt-conventions.md` for full conventions
-
-### Running dbt commands
-
-```bash
-make dbt-debug    # verify ClickHouse connection
-make dbt-compile  # compile Jinja → SQL without executing
-make dbt-run      # run all models
-make dbt-test     # run all 58 data quality tests
-make dbt-docs     # generate + serve docs at http://localhost:8080
-```
+| staging | `stg_matches` | view | Finished matches; ISO 8601 dates via `parseDateTimeBestEffort` |
+| staging | `stg_teams` | view | Unique teams from match participants |
+| intermediate | `int_team_match_results` | view | Unpivots matches → 1 row/team/match |
+| intermediate | `int_form_last_5` | view | Rolling 5-match form (window excludes current match) |
+| mart | `mart_standings` | MergeTree | Current standings computed from results |
+| mart | `mart_team_stats` | MergeTree | Home/away averages + attack/defence strength ratios |
+| mart | `mart_match_features` | MergeTree | One row/match: all ML features pre-joined, no leakage in form |
 
 ---
 
-## ML model — Poisson predictor
+## ML models
 
-**Level 1 — Poisson model** (`ml/scripts/train_poisson.py`)
+All models follow a **temporal train/holdout split**: train on the two oldest seasons, evaluate on the most recent season (never seen during fitting).
 
-Goals scored by each side are modelled as independent Poisson random variables:
+### Poisson model (`train_poisson.py`)
 
 ```
-λ_home = home_attack × away_defence × HOME_ADVANTAGE(1.2) × league_avg_goals
-λ_away = away_attack × home_defence × league_avg_goals
+λ_home = attack_home × defence_away × HOME_ADVANTAGE(1.2) × league_avg_goals
+λ_away = attack_away × defence_home × league_avg_goals
 ```
 
-P(H/D/A) is computed by summing the joint PMF over an 11×11 goal grid (0–10 goals).
+P(H/D/A) computed by summing the joint PMF over an 11×11 goal grid.  
+Registered in MLflow as `poisson-match-predictor` · alias `Production`.
 
-Training reads from `mart_team_stats` and `mart_match_features`. Metrics are logged to MLflow and the model artifact is registered as `poisson-match-predictor` with the `Production` alias.
+| Metric | Value (OOS 2025/26) |
+|---|---|
+| Accuracy | 49.1% |
+| Baseline (home win) | 48.8% |
+| Brier score | 0.602 |
 
-```bash
-# Retrain (requires MLflow + ClickHouse running)
-venv/bin/python ml/scripts/train_poisson.py
-# Optional flags: --ch-host, --ch-port, --mlflow-uri
-```
+### XGBoost classifier (`train_classifier.py`)
 
-**Current performance on 293 LaLiga matches:**
+Multi-class classifier with `TimeSeriesSplit(n_splits=3)` — no random shuffling, no future leakage.
+
+**Features** (10 total):
+
+| Feature | Description |
+|---|---|
+| `home_form_5_ppg` | Home team points-per-game in last 5 matches |
+| `away_form_5_ppg` | Away team points-per-game in last 5 matches |
+| `home_attack_strength` | Home avg goals scored / league avg |
+| `away_defence_weakness` | Away avg goals conceded / league avg |
+| `h2h_home_win_rate` | Historical H2H win rate for home team |
+| `h2h_matches_played` | H2H sample size (reliability proxy) |
+| `home_rest_days` | Days since home team's last match (capped at 14) |
+| `away_rest_days` | Days since away team's last match (capped at 14) |
+| `rest_days_diff` | `home_rest_days − away_rest_days` |
+| `position_diff` | Current home position − away position |
+
+Registered as `xgboost-match-classifier` · alias `Production`.
+
 | Metric | Value |
 |---|---|
-| Accuracy | 54.6% |
-| Baseline (always home win) | 48.8% |
-| Baseline (most frequent) | 48.8% |
+| CV accuracy (mean ± std) | 62.2% ± 1.5% |
+| Accuracy — last fold (2025/26) | **64.3%** |
+| Brier — last fold | 0.434 |
+| vs Poisson | +15.2 pp |
 
-MLflow UI: **http://localhost:5001** · Experiment: `football-match-prediction`
+**Feature importance (gain):**
 
-**Level 2 — XGBoost classifier** (`ml/scripts/train_classifier.py`, planned)
-- Target: `result ∈ {H, D, A}`
-- Input features from `mart_match_features`: form, attack/defence strength, h2h win rate, rest days, position diff
+| Rank | Feature | Weight |
+|---|---|---|
+| 1 | `h2h_home_win_rate` | 39.9% |
+| 2 | `position_diff` | 9.5% |
+| 3 | `h2h_matches_played` | 7.8% |
+| 4 | `away_defence_weakness` | 7.4% |
+| 5 | `home_attack_strength` | 6.3% |
+
+### Ensemble (`ensemble.py`)
+
+Grid search over `(w_poisson, w_xgb)` pairs: `[(0.2, 0.8), (0.3, 0.7), (0.35, 0.65), (0.4, 0.6)]`.  
+Guard: ensemble only registered if XGBoost Brier < Poisson Brier.  
+Best combo (2025/26 holdout): **XGBoost only** — blending with Poisson worsens calibration.
+
+Registered as `ensemble-match-predictor` · alias `Production`.
 
 ---
 
-## API
+## API endpoints
 
-### Start the API server
+Start the server:
+```bash
+PYTHONPATH=. uvicorn api.main:app --port 8001
+```
+
+Loads the ensemble from MLflow at startup. Falls back to Poisson if ensemble is not registered.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Liveness probe → `{"status": "ok"}` |
+| `POST` | `/predict` | P(home win / draw / away win) + expected goals |
+| `GET` | `/standings` | Full LaLiga table with projected points and form strings |
+| `GET` | `/teams/{id}/stats` | Home/away split: goals, points, clean sheets, strength |
+| `GET` | `/teams/{id}/form` | Last N matches with result, score, opponent |
+
+#### `POST /predict` example
 
 ```bash
-venv/bin/uvicorn api.main:app --reload --port 8000
+curl -X POST http://localhost:8001/predict \
+  -H "Content-Type: application/json" \
+  -d '{"home_team_id": 86, "away_team_id": 81}'
 ```
 
-The server loads the `Production` model from MLflow at startup. If MLflow is unreachable it will refuse to start.
-
-### Endpoints
-
-#### `GET /health`
-```json
-{"status": "ok"}
-```
-
-#### `POST /predict`
-Predict outcome probabilities for a LaLiga fixture.
-
-Request:
-```json
-{"home_team_id": 86, "away_team_id": 81}
-```
-
-Response:
 ```json
 {
   "home_team_id": 86,
   "away_team_id": 81,
-  "home_win": 0.5831,
-  "draw": 0.2574,
-  "away_win": 0.1595,
+  "home_win": 0.583,
+  "draw": 0.257,
+  "away_win": 0.160,
   "expected_home_goals": 1.526,
   "expected_away_goals": 0.657,
-  "model_version": "1"
+  "model_version": "ensemble-v2"
 }
 ```
 
-Team IDs are `football-data.org` identifiers. Unknown team IDs fall back to league-average strength (graceful degradation, no error).
+Interactive docs: **http://localhost:8001/docs**
+
+---
+
+## Frontend pages
+
+| Path | Content |
+|---|---|
+| `/overview` | Season KPIs, top 3 upcoming predictions, standings snapshot |
+| `/fixtures` | Full matchday prediction grid |
+| `/predictions` | Interactive team selector → real-time probability bars |
+| `/standings` | Full table with form dots (W/D/L), points, projected final points |
+| `/teams/[id]` | Home vs away stat cards, strength metrics, last 10 matches |
+| `/model` | Accuracy / Brier / log-loss KPIs, feature importance bar chart |
+
+---
+
+## Environment variables
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Used by | Notes |
+|---|---|---|
+| `FOOTBALL_API_KEY` | bootstrap script, Airflow DAGs | football-data.org token (required) |
+| `API_FOOTBALL_KEY` | planned DAGs | api-sports.io token |
+| `MINIO_ROOT_USER` | MinIO, DAGs | MinIO admin user |
+| `MINIO_ROOT_PASSWORD` | MinIO, DAGs | MinIO admin password |
+| `CLICKHOUSE_HOST` | Docker services | `clickhouse` inside Docker, `localhost` on host |
+| `CLICKHOUSE_PORT` | Host-side tools | `8124` (host-mapped) |
+| `CLICKHOUSE_DB` | All | `football` |
+| `MLFLOW_TRACKING_URI` | Docker services | `http://mlflow:5000` inside Docker |
+| `AIRFLOW__CORE__FERNET_KEY` | Airflow | Encryption key |
+| `AIRFLOW__WEBSERVER__SECRET_KEY` | Airflow | Session key |
+| `AIRFLOW_ADMIN_PASSWORD` | Airflow | Default: `admin` |
 
 ---
 
 ## Makefile reference
 
 ```
-make up           Start all Docker services
-make down         Stop all Docker services
-make bootstrap    Seed ClickHouse with live API data (dev only)
-make dbt-debug    Verify dbt → ClickHouse connection
-make dbt-compile  Compile models (no DB writes)
-make dbt-run      Run all dbt models
-make dbt-test     Run all 58 dbt data quality tests
-make dbt-docs     Generate and serve dbt documentation
-```
-
-### Full pipeline (dev)
-
-```bash
-make up                                   # 1. start stack
-make bootstrap                            # 2. seed data
-make dbt-run && make dbt-test             # 3. build mart tables
-venv/bin/python ml/scripts/train_poisson.py  # 4. train + register model
-venv/bin/uvicorn api.main:app --port 8000    # 5. start API
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{"home_team_id": 86, "away_team_id": 81}'
+make up              Start all Docker services
+make down            Stop all Docker services
+make bootstrap       Seed ClickHouse for current season (no Airflow)
+make dbt-run         Run all 7 dbt models
+make dbt-test        Run all data quality tests
+make dbt-docs        Generate + serve dbt docs at localhost:8080
 ```
 
 ---
 
 ## Troubleshooting
 
-### `dbt debug` fails — cannot connect to ClickHouse
-```
-Connection test: ERROR
-```
-The ClickHouse container is not running or is still starting.
+**ClickHouse connection refused**
 ```bash
-docker compose up -d clickhouse
-docker compose ps clickhouse       # wait for "healthy"
-```
-If port 8124 is already in use, another process is on that port. Check with `lsof -i :8124`.
-
-### `dbt run` — `football.raw_matches` does not exist
-The ClickHouse raw tables were not created. This means either:
-- ClickHouse was started before the `infra/clickhouse/init.sql` volume mount was in place (the init script only runs on a **fresh** data volume)
-- Solution: delete the volume and restart, or run the DDL manually:
-```bash
-docker compose down -v             # destroys data — dev only
-docker compose up -d clickhouse
+docker compose up -d clickhouse && docker compose ps clickhouse   # wait for "healthy"
 ```
 
-### `football.raw_matches` is empty — dbt models produce no rows
-The raw tables exist but have no data. Run the bootstrap script:
+**`raw_matches` is empty after `docker compose up`**  
+The `db-init` service exits non-zero (check logs). Re-run manually:
 ```bash
-make bootstrap
+docker compose run --rm db-init bash -c "python scripts/bootstrap_clickhouse.py --host clickhouse --port 8123 --seasons 2023 2024 2025"
 ```
 
-### Airflow DAG fails — `ModuleNotFoundError`
-The Airflow workers install `pandas pyarrow boto3 clickhouse-connect` via `_PIP_ADDITIONAL_REQUIREMENTS` on every container start. On a slow network this can time out. Restart the scheduler:
+**XGBoost import fails on macOS**
 ```bash
-docker compose restart airflow-scheduler
+brew install libomp
 ```
 
-### ClickHouse port conflict (8124 or 9010 already in use)
-Another project is occupying these ports. Either stop the conflicting containers, or change the ports in `docker-compose.yml` and update `dbt/profiles.yml` and `.env` to match.
-
-### `dbt test` — `not_null` failures on `mart_match_features`
-This usually means some matches have no form history yet (first matches of the season). The `form_points_last_5` column defaults to 0 for those rows. Verify with:
+**MLflow artifact write fails**  
+Delete the old `mlflow_data` volume (it was created before `--serve-artifacts` was added):
 ```bash
-curl "http://localhost:8124/?database=football&query=SELECT+count()+FROM+football.raw_matches+WHERE+status='FINISHED'"
+docker compose down -v && docker compose up -d mlflow
 ```
-If the count is low (< 5 matches), there is not enough history for form calculation.
+
+**HMR WebSocket reload loop in Next.js dev**  
+Always start the dev server with `--hostname 127.0.0.1` (already set in `package.json`). Accessing the app from a LAN IP causes HMR to use that IP for WebSocket connections, which fail after 12 retries and trigger `window.location.reload()` every ~40 s.
 
 ---
 
 ## Known limitations
 
-| Area | Limitation |
+| Area | Detail |
 |---|---|
-| **Data coverage** | Only LaLiga (competition code `PD`) is ingested. Other leagues require adding DAGs. |
-| **API rate limit** | football-data.org free tier: 10 req/min. The bootstrap script adds a 7 s delay between calls. Burst usage can trigger 429 errors. |
-| **Standings source** | `mart_standings` is derived from match results, not from the standings API snapshot. It will differ slightly from the official table if points deductions or administrative decisions exist. |
-| **XGBoost not yet trained** | `mart_match_features` is ready but `ml/scripts/train_classifier.py` is not yet implemented. |
-| **No frontend** | `frontend/` is an empty stub. React dashboard is planned for Phase 6. |
-| **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` installs packages on every container start (~2 min on first run). Consider building a custom image for faster restarts. |
-| **MLflow local storage** | MLflow uses SQLite + local artifacts (served via `--serve-artifacts`). Not suitable for multi-user or production use without switching to a shared backend. |
-| **ClickHouse MergeTree dedup** | Raw tables use `ReplacingMergeTree`. Deduplication happens asynchronously during background merges, not immediately on insert. Use `FINAL` keyword in queries if exact dedup is needed. |
-| **dbt ORDER BY bug (ClickHouse 24.3)** | `mart_match_features` uses `ORDER BY tuple()` because naming any column that appears in a window function ORDER BY inside a referenced view causes `UNKNOWN_IDENTIFIER` during DDL. |
+| **API tier** | football-data.org free tier: 10 req/min and access to the 3 most recent seasons only |
+| **`position_diff` leakage** | `mart_match_features` uses current-season standings for all historical matches. Standings at match time would be more accurate |
+| **Static attack/defence strength** | `mart_team_stats` aggregates the whole season. Strength early in the season (small sample) carries the same weight as late in the season |
+| **Ensemble calibration** | With one season of data the Brier-based guard falls back to XGBoost-only because Poisson hurts calibration. With more seasons, a blend may outperform either model individually |
+| **No Elo ratings** | Team strength is captured by seasonal averages, not a dynamic rating that updates after each match |
+| **No xG data** | Expected-goals features require API-Football (100 req/day free tier); not yet ingested |
+| **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` reinstalls packages on every container start. Build a custom image for faster restarts |
+| **Single-league** | Only LaLiga (PD) ingested. Other competitions require additional DAGs |
 
 ---
 
-## Roadmap
+## Next steps
 
-See `docs/progress.md` for the detailed checklist. Remaining work:
+### Model quality
+- [ ] **Elo ratings** — compute a dynamic Elo rating per team updated after every match; add `home_elo_diff` as feature; expected +3–5 pp accuracy
+- [ ] **Fix `position_diff` temporal leakage** — store standings snapshot per matchday in dbt (`int_standings_snapshot`) so position at match time is used, not current position
+- [ ] **Season-weighted Poisson** — give more weight to recent matches when computing attack/defence strengths; reduces the influence of results from 2 seasons ago
+- [ ] **Hyperparameter tuning** — run Optuna over XGBoost `max_depth`, `learning_rate`, `min_child_weight`; current params are conservative defaults
+- [ ] **Calibration layer** — add Platt scaling or isotonic regression on top of XGBoost probabilities; improves Brier score independently of accuracy
+- [ ] **Draw prediction** — the model systematically underestimates draws (hardest class); explore SMOTE oversampling or a dedicated draw-probability sub-model
 
-- **Phase 2:** `dags/ingest_scorers.py`, `dags/ingest_advanced_stats.py` (API-Football)
-- **Phase 3:** `staging/stg_goals.sql`, `intermediate/int_h2h.sql`; configure Airflow connections in UI
-- **Phase 4 (partial):** XGBoost training script (`train_classifier.py`), weekly retrain DAG
-- **Phase 5:** FastAPI — `/standings`, `/teams` endpoints
-- **Phase 6:** React dashboard — standings table, form widget, match prediction, xG chart
+### Data
+- [ ] **Ingest xG data** — connect API-Football (`/fixtures/statistics`) to get shots on target, possession, xG per match; add as features
+- [ ] **`dags/ingest_advanced_stats.py`** — Airflow DAG to automate API-Football ingestion (100 req/day free limit requires careful rate management)
+- [ ] **`dags/ingest_scorers.py`** — top scorers per matchday for future player-level features
+- [ ] **`intermediate/int_h2h.sql`** — materialise H2H stats as a proper dbt model instead of computing them inline in `mart_match_features`
+- [ ] **Multi-season standings snapshots** — `raw_standings` currently only holds the current snapshot; archive end-of-season tables for historical accuracy
+
+### Automation
+- [ ] **`dags/retrain_model.py`** — weekly Airflow DAG that runs dbt → train_poisson → train_classifier → ensemble in sequence every Monday 03:00 UTC
+- [ ] **Configure Airflow connections** — add ClickHouse and MinIO connections via the Airflow UI (currently `_PIP_ADDITIONAL_REQUIREMENTS` installs deps but connections are not pre-configured)
+- [ ] **Scheduled dbt runs** — add a DAG that runs `dbt run && dbt test` after each ingestion DAG completes
+
+### Frontend
+- [ ] **xG accumulated chart** — per-team xG over the season (requires API-Football data)
+- [ ] **Match detail page** — click a fixture to see H2H history, both team form, and model explanation
+- [ ] **SHAP explanations** — show per-prediction feature contributions on the `/predictions` page ("why this probability?")
+- [ ] **Live score updates** — poll `/standings` and `/fixtures` endpoints on a timer during matchdays
+
+### Infrastructure
+- [ ] **Custom Airflow image** — bake Python dependencies into the image instead of installing via `_PIP_ADDITIONAL_REQUIREMENTS`; cuts container startup from ~2 min to seconds
+- [ ] **Multi-league support** — parameterise DAGs and bootstrap script for PL, SA, BL1; each league needs its own dbt `source` and `mart_standings` partition
+- [ ] **Production MLflow backend** — replace SQLite + local artifact storage with PostgreSQL + S3/MinIO for multi-user or cloud deployment
+- [ ] **CI pipeline** — GitHub Actions: `dbt compile`, `dbt test` on every PR; `pytest` for API schemas
