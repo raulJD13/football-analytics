@@ -19,6 +19,7 @@ export default function OverviewPage() {
     (PredictResponse & { homeName: string; awayName: string })[]
   >([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -26,7 +27,6 @@ export default function OverviewPage() {
         const data = await fetchStandings();
         setStandings(data.standings);
 
-        // Pick 4 upcoming fixture pairs from top-8 teams for demo predictions
         const top = data.standings.slice(0, 8);
         const pairs = [
           [top[0], top[1]],
@@ -45,18 +45,30 @@ export default function OverviewPage() {
         );
         setPredictions(preds);
       } catch (err) {
-        console.error("Failed to load overview data:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        setError(msg);
       } finally {
         setLoading(false);
       }
     })();
   }, []);
 
+  if (error) {
+    return (
+      <PageTransition>
+        <div className="rounded-lg border border-loss/40 bg-loss/10 p-4 text-sm text-loss">
+          Failed to load dashboard data — is the API running on port 8001?
+          <br />
+          <span className="mt-1 block font-mono text-xs text-text-secondary">{error}</span>
+        </div>
+      </PageTransition>
+    );
+  }
+
   const totalMatches = standings.reduce((s, r) => s + r.played, 0) / 2;
 
   return (
     <PageTransition>
-      {/* KPI row */}
       <div className="grid grid-cols-4 gap-4">
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)
@@ -70,9 +82,7 @@ export default function OverviewPage() {
         )}
       </div>
 
-      {/* Two-column grid */}
       <div className="mt-6 grid grid-cols-2 gap-6">
-        {/* Upcoming predictions */}
         <div className="rounded-lg border border-border-custom bg-bg-card p-5">
           <h2 className="mb-4 text-sm font-semibold text-text-primary">
             Top matchup predictions
@@ -97,7 +107,6 @@ export default function OverviewPage() {
           )}
         </div>
 
-        {/* Standings snapshot */}
         <div className="rounded-lg border border-border-custom bg-bg-card p-5">
           <h2 className="mb-4 text-sm font-semibold text-text-primary">
             Standings snapshot

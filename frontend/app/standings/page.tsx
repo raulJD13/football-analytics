@@ -9,13 +9,26 @@ import { fetchStandings, type StandingEntry } from "@/lib/api";
 export default function StandingsPage() {
   const [standings, setStandings] = useState<StandingEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchStandings()
       .then((d) => setStandings(d.standings))
-      .catch(console.error)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, []);
+
+  if (error) {
+    return (
+      <PageTransition>
+        <div className="rounded-lg border border-loss/40 bg-loss/10 p-4 text-sm text-loss">
+          Failed to load standings — is the API running on port 8001?
+          <br />
+          <span className="mt-1 block font-mono text-xs text-text-secondary">{error}</span>
+        </div>
+      </PageTransition>
+    );
+  }
 
   return (
     <PageTransition>

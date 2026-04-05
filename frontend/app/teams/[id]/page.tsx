@@ -50,6 +50,7 @@ export default function TeamDetailPage() {
   const [stats, setStats] = useState<TeamStatsResponse | null>(null);
   const [form, setForm] = useState<FormMatch[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
@@ -58,7 +59,7 @@ export default function TeamDetailPage() {
         setStats(s);
         setForm(f.matches);
       })
-      .catch(console.error)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [teamId]);
 
@@ -66,6 +67,18 @@ export default function TeamDetailPage() {
     return (
       <PageTransition>
         <TableSkeleton rows={10} />
+      </PageTransition>
+    );
+  }
+
+  if (error) {
+    return (
+      <PageTransition>
+        <div className="rounded-lg border border-loss/40 bg-loss/10 p-4 text-sm text-loss">
+          Failed to load team data — is the API running on port 8001?
+          <br />
+          <span className="mt-1 block font-mono text-xs text-text-secondary">{error}</span>
+        </div>
       </PageTransition>
     );
   }
