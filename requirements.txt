@@ -8,6 +8,8 @@ pandas==2.3.3
 numpy==2.4.4
 scipy==1.17.1
 pyarrow==19.0.1
+scikit-learn==1.7.0
+xgboost==3.0.2
 
 # ClickHouse
 clickhouse-connect==0.15.1

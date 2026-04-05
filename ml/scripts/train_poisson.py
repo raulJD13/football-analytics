@@ -146,25 +146,12 @@ class PoissonPredictor(mlflow.pyfunc.PythonModel):
 
 # ── data loading ─────────────────────────────────────────────────────────────
 
-def load_team_stats(client: clickhouse_connect.driver.Client) -> pd.DataFrame:
-    """Load per-team home/away averages from mart_team_stats."""
-    query = """
-        SELECT
-            team_id,
-            home_avg_goals_scored,
-            home_avg_goals_conceded,
-            away_avg_goals_scored,
-            away_avg_goals_conceded
-        FROM football.mart_team_stats
-    """
-    return client.query_df(query)
-
-
 def load_finished_matches(client: clickhouse_connect.driver.Client) -> pd.DataFrame:
     """Load finished matches with known outcomes from mart_match_features."""
     query = """
         SELECT
             match_id,
+            match_date,
             home_team_id,
             away_team_id,
             home_goals,
@@ -174,43 +161,93 @@ def load_finished_matches(client: clickhouse_connect.driver.Client) -> pd.DataFr
         WHERE result IN ('H', 'D', 'A')
           AND home_goals IS NOT NULL
           AND away_goals IS NOT NULL
+        ORDER BY match_date
     """
     return client.query_df(query)
 
 
+# ── train / holdout split ─────────────────────────────────────────────────────
+
+def _season_year(date: pd.Timestamp) -> int:
+    """August-anchored season year: Aug 2024 → 2024, May 2025 → 2024."""
+    ts = pd.Timestamp(date)
+    return ts.year if ts.month >= 8 else ts.year - 1
+
+
+def split_train_holdout(
+    matches: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split into train (all seasons except last) and holdout (last season only).
+
+    The holdout set is never seen during parameter fitting, giving a true
+    out-of-sample accuracy estimate.
+    """
+    seasons = matches["match_date"].apply(_season_year)
+    latest_season = int(seasons.max())
+    train = matches[seasons < latest_season].copy()
+    holdout = matches[seasons == latest_season].copy()
+
+    n_train_seasons = seasons[seasons < latest_season].nunique()
+    log.info(
+        "Season split — train: %d matches (%d seasons) | holdout: %d matches "
+        "(season %d/%d)",
+        len(train), n_train_seasons,
+        len(holdout), latest_season, latest_season + 1,
+    )
+    return train, holdout
+
+
 # ── strength computation ──────────────────────────────────────────────────────
 
-def build_team_params(stats: pd.DataFrame, league_avg: float) -> dict:
-    """Build the team-strength lookup dict saved as a model artifact.
+def build_team_params(matches: pd.DataFrame, league_avg: float) -> dict:
+    """Compute team-strength params from *match rows* (not from mart_team_stats).
+
+    This allows calling it with train-only data so holdout matches never
+    influence the fitted parameters.
+
+    Unpivots each match into two per-team rows (home + away), then computes
+    per-team averages.  Teams absent from ``matches`` fall back to league avg
+    (neutral strength = 1.0 ratio).
 
     Returns a JSON-serialisable dict:
         {
           "team_strengths": {
               "<team_id>": {
-                  "home_attack":   float,  # home avg scored / league avg
-                  "home_defence":  float,  # home avg conceded / league avg
-                  "away_attack":   float,  # away avg scored / league avg
-                  "away_defence":  float,  # away avg conceded / league avg
+                  "home_attack":   float,   # home avg scored  / league avg
+                  "home_defence":  float,   # home avg conceded / league avg
+                  "away_attack":   float,   # away avg scored  / league avg
+                  "away_defence":  float,   # away avg conceded / league avg
               }, ...
           },
           "league_avg_goals": float,
           "home_advantage":   float,
         }
     """
-    strengths: dict[str, dict[str, float]] = {}
-    for _, row in stats.iterrows():
-        tid = str(int(row["team_id"]))
-        # Fill NaN (teams with no home/away games yet) with 1.0 (league average)
-        ha = float(row["home_avg_goals_scored"]) if pd.notna(row["home_avg_goals_scored"]) else league_avg
-        hd = float(row["home_avg_goals_conceded"]) if pd.notna(row["home_avg_goals_conceded"]) else league_avg
-        aa = float(row["away_avg_goals_scored"]) if pd.notna(row["away_avg_goals_scored"]) else league_avg
-        ad = float(row["away_avg_goals_conceded"]) if pd.notna(row["away_avg_goals_conceded"]) else league_avg
+    # Unpivot: one row per (team, match) perspective
+    home_rows = matches[["home_team_id", "home_goals", "away_goals"]].rename(
+        columns={"home_team_id": "team_id", "home_goals": "scored", "away_goals": "conceded"}
+    ).assign(is_home=True)
+    away_rows = matches[["away_team_id", "away_goals", "home_goals"]].rename(
+        columns={"away_team_id": "team_id", "away_goals": "scored", "home_goals": "conceded"}
+    ).assign(is_home=False)
+    df = pd.concat([home_rows, away_rows], ignore_index=True)
+    df["scored"] = pd.to_numeric(df["scored"], errors="coerce")
+    df["conceded"] = pd.to_numeric(df["conceded"], errors="coerce")
 
-        strengths[tid] = {
-            "home_attack":  round(ha / league_avg, 4),
-            "home_defence": round(hd / league_avg, 4),
-            "away_attack":  round(aa / league_avg, 4),
-            "away_defence": round(ad / league_avg, 4),
+    strengths: dict[str, dict[str, float]] = {}
+    for team_id, grp in df.groupby("team_id"):
+        home = grp[grp["is_home"]]
+        away = grp[~grp["is_home"]]
+
+        def _avg(series: pd.Series) -> float:
+            v = series.mean()
+            return float(v) if pd.notna(v) else league_avg
+
+        strengths[str(int(team_id))] = {
+            "home_attack":  round(_avg(home["scored"])   / league_avg, 4),
+            "home_defence": round(_avg(home["conceded"]) / league_avg, 4),
+            "away_attack":  round(_avg(away["scored"])   / league_avg, 4),
+            "away_defence": round(_avg(away["conceded"]) / league_avg, 4),
         }
 
     return {
@@ -304,28 +341,53 @@ def train(
     log.info("Connecting to ClickHouse at %s:%d/%s", ch_host, ch_port, ch_db)
     client = clickhouse_connect.get_client(host=ch_host, port=ch_port, database=ch_db)
 
-    # ── load data ─────────────────────────────────────────────────────────────
-    log.info("Loading team stats …")
-    stats = load_team_stats(client)
-    log.info("  %d teams loaded", len(stats))
-
+    # ── load all finished matches ─────────────────────────────────────────────
     log.info("Loading finished matches …")
-    matches = load_finished_matches(client)
-    log.info("  %d finished matches loaded", len(matches))
+    all_matches = load_finished_matches(client)
+    log.info("  %d finished matches loaded", len(all_matches))
 
-    # ── compute league average: total goals / total matches ───────────────────
+    # ── train / holdout split by season ──────────────────────────────────────
+    # Team params are fit on train only → holdout is truly out-of-sample.
+    train_matches, holdout_matches = split_train_holdout(all_matches)
+
+    one_season_only = len(train_matches) == 0
+    if one_season_only:
+        log.warning(
+            "Only one season available — falling back to in-sample evaluation."
+        )
+        train_matches = all_matches
+
+    # ── league average from TRAIN only ───────────────────────────────────────
     league_avg = float(
-        (matches["home_goals"].astype(float) + matches["away_goals"].astype(float)).mean()
+        (train_matches["home_goals"].astype(float)
+         + train_matches["away_goals"].astype(float)).mean()
     )
-    log.info("League average goals per match: %.4f", league_avg)
+    log.info("League average goals per match (train): %.4f", league_avg)
 
-    # ── build team parameters ─────────────────────────────────────────────────
-    params = build_team_params(stats, league_avg)
+    # ── build team parameters from TRAIN only ────────────────────────────────
+    params = build_team_params(train_matches, league_avg)
 
-    # ── instantiate and evaluate predictor ───────────────────────────────────
+    # ── instantiate predictor ─────────────────────────────────────────────────
     predictor = PoissonPredictor()
     predictor._init_from_params(params)
-    metrics = evaluate(matches, predictor)
+
+    # ── out-of-sample evaluation (primary) ───────────────────────────────────
+    eval_set = holdout_matches if not one_season_only else all_matches
+    oos_metrics = evaluate(eval_set, predictor)
+
+    # ── in-sample evaluation (for overfitting diagnosis) ─────────────────────
+    is_metrics = evaluate(train_matches, predictor)
+
+    improvement = oos_metrics["accuracy"] - oos_metrics["baseline_always_home_win_accuracy"]
+    log.info(
+        "OUT-OF-SAMPLE → accuracy=%.3f | baseline_home=%.3f | improvement=%+.3f pp | "
+        "brier=%.4f | log_loss=%.4f",
+        oos_metrics["accuracy"],
+        oos_metrics["baseline_always_home_win_accuracy"],
+        improvement,
+        oos_metrics["brier_score"],
+        oos_metrics["log_loss"],
+    )
 
     # ── MLflow ────────────────────────────────────────────────────────────────
     mlflow.set_tracking_uri(mlflow_uri)
@@ -337,14 +399,26 @@ def train(
             "home_advantage": HOME_ADVANTAGE,
             "max_goals_grid": MAX_GOALS,
             "league_avg_goals": round(league_avg, 4),
-            "n_teams": len(stats),
+            "n_teams": len(params["team_strengths"]),
             "competition": "LaLiga (PD)",
+            "eval_strategy": "last_season_holdout",
         })
 
-        # Metrics
-        mlflow.log_metrics(metrics)
+        # Out-of-sample metrics (the real numbers)
+        mlflow.log_metrics({
+            "accuracy_out_of_sample":    oos_metrics["accuracy"],
+            "brier_score_out_of_sample": oos_metrics["brier_score"],
+            "log_loss_out_of_sample":    oos_metrics["log_loss"],
+            "baseline_home_win":         oos_metrics["baseline_always_home_win_accuracy"],
+            "baseline_most_frequent":    oos_metrics["baseline_most_frequent_accuracy"],
+            "improvement_vs_baseline":   improvement,
+            "n_holdout_matches":         float(len(eval_set)),
+            # In-sample for comparison / overfitting check
+            "accuracy_in_sample":        is_metrics["accuracy"],
+            "n_train_matches":           float(len(train_matches)),
+        })
 
-        # Artifact: team strength JSON
+        # Artifact: team strength JSON fitted on train data
         # We use log_artifact (works with both MLflow 2.x and 3.x) rather than
         # pyfunc.log_model to avoid the v3 "logged-models" server endpoint that
         # does not exist in the MLflow 2.11 Docker image.
