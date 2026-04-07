@@ -12,10 +12,30 @@ export default function StandingsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchStandings()
-      .then((d) => setStandings(d.standings))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const d = await fetchStandings();
+        if (!cancelled) {
+          setStandings(d.standings);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+    void load();
+    const interval = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   if (error) {

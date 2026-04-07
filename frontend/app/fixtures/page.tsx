@@ -5,52 +5,42 @@ import PageTransition from "@/components/ui/PageTransition";
 import MatchCard from "@/components/ui/MatchCard";
 import { KpiSkeleton } from "@/components/ui/CardSkeleton";
 import {
-  fetchStandings,
-  postPredict,
-  type StandingEntry,
-  type PredictResponse,
+  fetchFixtures,
+  type FixtureEntry,
 } from "@/lib/api";
 
 export default function FixturesPage() {
-  const [fixtures, setFixtures] = useState<
-    (PredictResponse & { homeName: string; awayName: string })[]
-  >([]);
+  const [fixtures, setFixtures] = useState<FixtureEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    (async () => {
+    let cancelled = false;
+    const load = async () => {
       try {
-        const data = await fetchStandings();
-        const teams = data.standings;
-
-        // Generate round-robin matchday from all teams (top 10 pairs)
-        const pairs: [StandingEntry, StandingEntry][] = [];
-        for (let i = 0; i < teams.length - 1 && pairs.length < 10; i += 2) {
-          pairs.push([teams[i], teams[i + 1]]);
+        const data = await fetchFixtures(12);
+        if (!cancelled) {
+          setFixtures(data.fixtures);
         }
-
-        const results = await Promise.all(
-          pairs.map(async ([h, a]) => {
-            const res = await postPredict({
-              home_team_id: h.team_id,
-              away_team_id: a.team_id,
-            });
-            return { ...res, homeName: h.team_name, awayName: a.team_name };
-          }),
-        );
-        setFixtures(results);
       } catch (err) {
         console.error("Failed to load fixtures:", err);
       } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
-    })();
+    };
+    void load();
+    const interval = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   return (
     <PageTransition>
       <p className="mb-6 text-sm text-text-secondary">
-        Simulated fixture predictions between all LaLiga teams.
+        Current-season fixtures with live score polling and production-model probabilities.
       </p>
       {loading ? (
         <div className="grid grid-cols-2 gap-4">
@@ -62,14 +52,18 @@ export default function FixturesPage() {
         <div className="grid grid-cols-2 gap-4">
           {fixtures.map((f) => (
             <MatchCard
-              key={`${f.home_team_id}-${f.away_team_id}`}
-              homeName={f.homeName}
-              awayName={f.awayName}
-              homeWin={f.home_win}
-              draw={f.draw}
-              awayWin={f.away_win}
-              expectedHome={f.expected_home_goals}
-              expectedAway={f.expected_away_goals}
+              key={f.match_id}
+              matchId={f.match_id}
+              homeName={f.home_team_name}
+              awayName={f.away_team_name}
+              status={f.status}
+              homeGoals={f.home_goals}
+              awayGoals={f.away_goals}
+              homeWin={f.home_win ?? 0}
+              draw={f.draw ?? 0}
+              awayWin={f.away_win ?? 0}
+              expectedHome={f.expected_home_goals ?? 0}
+              expectedAway={f.expected_away_goals ?? 0}
             />
           ))}
         </div>

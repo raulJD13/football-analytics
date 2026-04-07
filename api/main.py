@@ -16,6 +16,8 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.routers.fixtures import router as fixtures_router
+from api.routers.model import router as model_router
 from api.routers.predict import lifespan, router as predict_router
 from api.routers.standings import router as standings_router
 from api.routers.teams import router as teams_router
@@ -37,6 +39,8 @@ app.add_middleware(
 )
 
 app.include_router(predict_router)
+app.include_router(model_router)
+app.include_router(fixtures_router)
 app.include_router(standings_router)
 app.include_router(teams_router)
 

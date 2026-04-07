@@ -2,14 +2,17 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import XgTrendChart from "@/components/charts/XgTrendChart";
 import PageTransition from "@/components/ui/PageTransition";
 import FormDots from "@/components/ui/FormDots";
 import { TableSkeleton } from "@/components/ui/CardSkeleton";
 import {
   fetchTeamStats,
   fetchTeamForm,
+  fetchTeamXg,
   type TeamStatsResponse,
   type FormMatch,
+  type TeamXgPoint,
 } from "@/lib/api";
 
 function StatBlock({
@@ -49,15 +52,17 @@ export default function TeamDetailPage() {
 
   const [stats, setStats] = useState<TeamStatsResponse | null>(null);
   const [form, setForm] = useState<FormMatch[]>([]);
+  const [xgPoints, setXgPoints] = useState<TeamXgPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
-    Promise.all([fetchTeamStats(teamId), fetchTeamForm(teamId)])
-      .then(([s, f]) => {
+    Promise.all([fetchTeamStats(teamId), fetchTeamForm(teamId), fetchTeamXg(teamId)])
+      .then(([s, f, xg]) => {
         setStats(s);
         setForm(f.matches);
+        setXgPoints(xg.points);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
@@ -126,6 +131,17 @@ export default function TeamDetailPage() {
             {stats.away_defence_weakness?.toFixed(3) ?? "-"}
           </p>
         </div>
+      </div>
+
+      <div className="mt-6 rounded-lg border border-border-custom bg-bg-card p-5">
+        <h3 className="mb-4 text-sm font-semibold text-text-primary">
+          xG accumulated chart
+        </h3>
+        {xgPoints.length > 0 ? (
+          <XgTrendChart points={xgPoints} />
+        ) : (
+          <p className="text-sm text-text-secondary">No xG data loaded for this team yet.</p>
+        )}
       </div>
 
       {/* Recent form table */}

@@ -424,10 +424,10 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 - [ ] **Scheduled dbt runs** — add a DAG that runs `dbt run && dbt test` after each ingestion DAG completes
 
 ### Frontend
-- [ ] **xG accumulated chart** — per-team xG over the season (requires API-Football data)
-- [ ] **Match detail page** — click a fixture to see H2H history, both team form, and model explanation
-- [ ] **SHAP explanations** — show per-prediction feature contributions on the `/predictions` page ("why this probability?")
-- [ ] **Live score updates** — poll `/standings` and `/fixtures` endpoints on a timer during matchdays
+- [x] **xG accumulated chart** — per-team xG over the season (requires API-Football data)
+- [x] **Match detail page** — click a fixture to see H2H history, both team form, and model explanation
+- [x] **SHAP explanations** — show per-prediction feature contributions on the `/predictions` page ("why this probability?")
+- [x] **Live score updates** — poll `/standings` and `/fixtures` endpoints on a timer during matchdays
 
 ### Infrastructure
 - [ ] **Custom Airflow image** — bake Python dependencies into the image instead of installing via `_PIP_ADDITIONAL_REQUIREMENTS`; cuts container startup from ~2 min to seconds

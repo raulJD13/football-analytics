@@ -7,8 +7,10 @@ import StandingsTable from "@/components/ui/StandingsTable";
 import MatchCard from "@/components/ui/MatchCard";
 import { KpiSkeleton, TableSkeleton } from "@/components/ui/CardSkeleton";
 import {
+  fetchModelMetrics,
   fetchStandings,
   postPredict,
+  type ModelMetricsResponse,
   type StandingEntry,
   type PredictResponse,
 } from "@/lib/api";
@@ -18,6 +20,7 @@ export default function OverviewPage() {
   const [predictions, setPredictions] = useState<
     (PredictResponse & { homeName: string; awayName: string })[]
   >([]);
+  const [metrics, setMetrics] = useState<ModelMetricsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,6 +28,8 @@ export default function OverviewPage() {
     (async () => {
       try {
         const data = await fetchStandings();
+        const modelMetrics = await fetchModelMetrics();
+        setMetrics(modelMetrics);
         setStandings(data.standings);
 
         const top = data.standings.slice(0, 8);
@@ -75,8 +80,8 @@ export default function OverviewPage() {
         ) : (
           <>
             <KpiCard title="Matches processed" value={totalMatches} />
-            <KpiCard title="Model accuracy" value={54.6} suffix="%" decimals={1} />
-            <KpiCard title="Brier score" value={0.63} decimals={2} />
+            <KpiCard title="Model accuracy" value={(metrics?.accuracy ?? 0) * 100} suffix="%" decimals={1} />
+            <KpiCard title="Brier score" value={metrics?.brier_score ?? 0} decimals={3} />
             <KpiCard title="Teams tracked" value={standings.length} />
           </>
         )}
@@ -96,6 +101,8 @@ export default function OverviewPage() {
                   key={`${p.home_team_id}-${p.away_team_id}`}
                   homeName={p.homeName}
                   awayName={p.awayName}
+                  homeGoals={null}
+                  awayGoals={null}
                   homeWin={p.home_win}
                   draw={p.draw}
                   awayWin={p.away_win}

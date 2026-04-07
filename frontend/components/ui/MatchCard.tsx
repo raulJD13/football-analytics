@@ -1,8 +1,13 @@
+import Link from "next/link";
 import ProbabilityBars from "./ProbabilityBars";
 
 interface Props {
+  matchId?: number;
   homeName: string;
   awayName: string;
+  status?: string;
+  homeGoals?: number | null;
+  awayGoals?: number | null;
   homeWin: number;
   draw: number;
   awayWin: number;
@@ -11,19 +16,32 @@ interface Props {
 }
 
 export default function MatchCard({
+  matchId,
   homeName,
   awayName,
+  status,
+  homeGoals,
+  awayGoals,
   homeWin,
   draw,
   awayWin,
   expectedHome,
   expectedAway,
 }: Props) {
-  return (
+  const content = (
     <div className="rounded-lg border border-border-custom bg-bg-card p-4 transition-transform duration-150 hover:-translate-y-px">
       <div className="mb-3 flex items-center justify-between text-sm font-medium text-text-primary">
         <span>{homeName}</span>
-        <span className="text-xs text-text-secondary">vs</span>
+        <div className="text-center">
+          <span className="text-xs text-text-secondary">
+            {homeGoals != null && awayGoals != null ? `${homeGoals} - ${awayGoals}` : "vs"}
+          </span>
+          {status ? (
+            <span className="block text-[10px] uppercase tracking-wide text-text-secondary">
+              {status}
+            </span>
+          ) : null}
+        </div>
         <span>{awayName}</span>
       </div>
       <ProbabilityBars
@@ -38,5 +56,15 @@ export default function MatchCard({
         <span>xG {expectedAway.toFixed(1)}</span>
       </div>
     </div>
+  );
+
+  if (matchId == null) {
+    return content;
+  }
+
+  return (
+    <Link href={`/matches/${matchId}`} className="block">
+      {content}
+    </Link>
   );
 }

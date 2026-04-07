@@ -80,6 +80,90 @@ export interface PredictResponse {
   model_version: string;
 }
 
+export interface FeatureContribution {
+  feature: string;
+  value: number;
+  contribution: number;
+}
+
+export interface PredictExplainResponse extends PredictResponse {
+  top_contributions: FeatureContribution[];
+  explanation_label: string;
+}
+
+export interface FeatureImportanceEntry {
+  name: string;
+  importance: number;
+}
+
+export interface ModelMetricsResponse {
+  model_name: string;
+  model_version: string;
+  accuracy: number;
+  brier_score: number;
+  log_loss: number | null;
+  baseline_accuracy: number;
+  feature_importance: FeatureImportanceEntry[];
+}
+
+export interface FixtureEntry {
+  match_id: number;
+  match_date: string;
+  status: string;
+  matchday: number | null;
+  home_team_id: number;
+  home_team_name: string;
+  away_team_id: number;
+  away_team_name: string;
+  home_goals: number | null;
+  away_goals: number | null;
+  home_win: number | null;
+  draw: number | null;
+  away_win: number | null;
+  expected_home_goals: number | null;
+  expected_away_goals: number | null;
+}
+
+export interface FixturesResponse {
+  season: number;
+  fixtures: FixtureEntry[];
+}
+
+export interface HeadToHeadMatch {
+  match_id: number;
+  match_date: string;
+  home_team_name: string;
+  away_team_name: string;
+  home_goals: number | null;
+  away_goals: number | null;
+  result: string;
+}
+
+export interface MatchDetailResponse {
+  fixture: FixtureEntry;
+  home_form: FormMatch[];
+  away_form: FormMatch[];
+  head_to_head: HeadToHeadMatch[];
+  top_contributions: FeatureContribution[];
+  explanation_label: string | null;
+}
+
+export interface TeamXgPoint {
+  match_id: number;
+  match_date: string;
+  opponent_team_id: number;
+  is_home: boolean;
+  expected_goals_for: number;
+  expected_goals_against: number;
+  cumulative_expected_goals_for: number;
+  cumulative_expected_goals_against: number;
+}
+
+export interface TeamXgResponse {
+  team_id: number;
+  points: TeamXgPoint[];
+}
+
 // ── Fetchers ───────────────────────────────────────────────────────────────
 
 async function get<T>(path: string): Promise<T> {
@@ -106,6 +190,22 @@ export function fetchTeamForm(
   return get(`/api/teams/${teamId}/form?n=${n}`);
 }
 
+export function fetchTeamXg(teamId: number): Promise<TeamXgResponse> {
+  return get(`/api/teams/${teamId}/xg`);
+}
+
+export function fetchModelMetrics(): Promise<ModelMetricsResponse> {
+  return get("/api/model/metrics");
+}
+
+export function fetchFixtures(limit = 12): Promise<FixturesResponse> {
+  return get(`/api/fixtures?limit=${limit}`);
+}
+
+export function fetchMatchDetail(matchId: number): Promise<MatchDetailResponse> {
+  return get(`/api/fixtures/${matchId}`);
+}
+
 export async function postPredict(
   body: PredictRequest,
 ): Promise<PredictResponse> {
@@ -116,4 +216,16 @@ export async function postPredict(
   });
   if (!res.ok) throw new Error(`POST /api/predict failed: ${res.status}`);
   return res.json() as Promise<PredictResponse>;
+}
+
+export async function postPredictExplain(
+  body: PredictRequest,
+): Promise<PredictExplainResponse> {
+  const res = await fetch("/api/predict/explain", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`POST /api/predict/explain failed: ${res.status}`);
+  return res.json() as Promise<PredictExplainResponse>;
 }

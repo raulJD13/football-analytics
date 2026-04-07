@@ -38,3 +38,14 @@ class PredictResponse(BaseModel):
             "model_version": "1",
         }
     }}
+
+
+class FeatureContribution(BaseModel):
+    feature: str
+    value: float
+    contribution: float
+
+
+class PredictExplainResponse(PredictResponse):
+    top_contributions: list[FeatureContribution]
+    explanation_label: str = Field(..., description="Predicted class explained by SHAP values")

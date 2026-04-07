@@ -14,16 +14,16 @@ import {
 } from "@/components/ui/select";
 import {
   fetchStandings,
-  postPredict,
+  postPredictExplain,
   type StandingEntry,
-  type PredictResponse,
+  type PredictExplainResponse,
 } from "@/lib/api";
 
 export default function PredictionsPage() {
   const [teams, setTeams] = useState<StandingEntry[]>([]);
   const [homeId, setHomeId] = useState<string>("");
   const [awayId, setAwayId] = useState<string>("");
-  const [result, setResult] = useState<PredictResponse | null>(null);
+  const [result, setResult] = useState<PredictExplainResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [teamsLoading, setTeamsLoading] = useState(true);
 
@@ -42,7 +42,7 @@ export default function PredictionsPage() {
     setLoading(true);
     setResult(null);
     try {
-      const res = await postPredict({
+      const res = await postPredictExplain({
         home_team_id: Number(homeId),
         away_team_id: Number(awayId),
       });
@@ -55,7 +55,7 @@ export default function PredictionsPage() {
   }
 
   // Confidence heuristic based on how "decisive" the probabilities are
-  function confidence(r: PredictResponse): string {
+  function confidence(r: PredictExplainResponse): string {
     const max = Math.max(r.home_win, r.draw, r.away_win);
     if (max > 0.55) return "High";
     if (max > 0.4) return "Medium";
@@ -155,7 +155,7 @@ export default function PredictionsPage() {
               </div>
 
               <div className="border-t border-border-custom pt-3 text-xs text-text-secondary">
-                Model: Poisson v{result.model_version} · Confidence:{" "}
+                Model: {result.model_version} · Confidence:{" "}
                 <span
                   className={
                     confidence(result) === "High"
@@ -168,6 +168,28 @@ export default function PredictionsPage() {
                   {confidence(result)}
                 </span>
               </div>
+
+              {result.top_contributions.length > 0 ? (
+                <div className="border-t border-border-custom pt-4">
+                  <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">
+                    SHAP explanation · {result.explanation_label}
+                  </p>
+                  <div className="space-y-2">
+                    {result.top_contributions.map((item) => (
+                      <div key={item.feature} className="flex items-center justify-between text-xs">
+                        <div>
+                          <p className="font-medium text-text-primary">{item.feature}</p>
+                          <p className="text-text-secondary">value {item.value.toFixed(3)}</p>
+                        </div>
+                        <span className={item.contribution >= 0 ? "text-win" : "text-loss"}>
+                          {item.contribution >= 0 ? "+" : ""}
+                          {item.contribution.toFixed(3)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </div>

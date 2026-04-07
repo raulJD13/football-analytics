@@ -25,18 +25,23 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
-import joblib
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status
+from xgboost import DMatrix, XGBClassifier
 
 import mlflow.artifacts
 import mlflow.tracking
 
 from api.db.clickhouse import get_client
 from api.db.predict_features import fetch_prediction_features
-from api.schemas.predict import PredictRequest, PredictResponse
+from api.schemas.predict import (
+    FeatureContribution,
+    PredictExplainResponse,
+    PredictRequest,
+    PredictResponse,
+)
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -64,6 +69,7 @@ class _ModelState:
     def __init__(self) -> None:
         self._poisson: PoissonPredictor | None = None
         self._xgb: object | None = None
+        self._xgb_base: XGBClassifier | None = None
         self._ensemble_config: dict | None = None   # {w_poisson, w_xgb, ...}
         self._poisson_version: str = "unknown"
         self._ensemble_version: str = "unknown"
@@ -111,30 +117,19 @@ class _ModelState:
             )
             self._ensemble_config = json.loads(Path(cfg_path).read_text())
 
-            # Classifier artifact (registered alongside ensemble)
             xgb_mv = client.get_model_version_by_alias(
                 self._ensemble_config["xgb_model"], MODEL_ALIAS
             )
-            try:
-                classifier_path = mlflow.artifacts.download_artifacts(
-                    run_id=xgb_mv.run_id,
-                    artifact_path="model/classifier.joblib",
-                    tracking_uri=MLFLOW_URI,
-                    dst_path=tmpdir,
-                )
-                self._xgb = joblib.load(classifier_path)
-            except mlflow.exceptions.MlflowException:
-                from xgboost import XGBClassifier
-
-                xgb_path = mlflow.artifacts.download_artifacts(
-                    run_id=xgb_mv.run_id,
-                    artifact_path="model/xgb_model.json",
-                    tracking_uri=MLFLOW_URI,
-                    dst_path=tmpdir,
-                )
-                xgb = XGBClassifier()
-                xgb.load_model(xgb_path)
-                self._xgb = xgb
+            xgb_path = mlflow.artifacts.download_artifacts(
+                run_id=xgb_mv.run_id,
+                artifact_path="model/xgb_model.json",
+                tracking_uri=MLFLOW_URI,
+                dst_path=tmpdir,
+            )
+            xgb = XGBClassifier()
+            xgb.load_model(xgb_path)
+            self._xgb_base = xgb
+            self._xgb = xgb
 
         self._ensemble_version = mv.version
         w_p = self._ensemble_config["w_poisson"]
@@ -190,7 +185,8 @@ class _ModelState:
             return float(p_hda[0]), float(p_hda[1]), float(p_hda[2])
 
         # ── XGBoost probabilities: reorder from [A,D,H] → [H,D,A] ───────────
-        xgb_probs_adh = self._xgb.predict_proba(xgb_features)[0]   # (3,)
+        aligned_xgb_features = self._align_xgb_features(xgb_features)
+        xgb_probs_adh = self._xgb.predict_proba(aligned_xgb_features)[0]   # (3,)
         x_hda = np.array([xgb_probs_adh[2], xgb_probs_adh[1], xgb_probs_adh[0]])
 
         # ── blend ─────────────────────────────────────────────────────────────
@@ -208,6 +204,54 @@ class _ModelState:
         if self._poisson is None:
             raise RuntimeError("Model not loaded.")
         return self._poisson
+
+    def explain_prediction(
+        self,
+        xgb_features: pd.DataFrame,
+    ) -> tuple[list[FeatureContribution], str | None]:
+        """Return top SHAP contributions for the predicted class."""
+        if self._xgb_base is None:
+            return [], None
+
+        classifier = self._xgb if self._xgb is not None else self._xgb_base
+        aligned_xgb_features = self._align_xgb_features(xgb_features)
+        probs_adh = classifier.predict_proba(aligned_xgb_features)[0]  # type: ignore[attr-defined]
+        predicted_idx_adh = int(np.argmax(probs_adh))
+        label_by_idx = {0: "away_win", 1: "draw", 2: "home_win"}
+
+        booster = self._xgb_base.get_booster()
+        contribs = booster.predict(
+            DMatrix(aligned_xgb_features, feature_names=list(aligned_xgb_features.columns)),
+            pred_contribs=True,
+            strict_shape=True,
+        )
+        predicted_contribs = contribs[0, predicted_idx_adh]
+        feature_contribs = predicted_contribs[:-1]
+        pairs = [
+            FeatureContribution(
+                feature=feature,
+                value=float(aligned_xgb_features.iloc[0][feature]),
+                contribution=float(contribution),
+            )
+            for feature, contribution in zip(aligned_xgb_features.columns, feature_contribs, strict=False)
+        ]
+        pairs.sort(key=lambda item: abs(item.contribution), reverse=True)
+        return pairs[:6], label_by_idx[predicted_idx_adh]
+
+    def _align_xgb_features(self, xgb_features: pd.DataFrame) -> pd.DataFrame:
+        """Match inference features to the exact schema expected by the loaded booster."""
+        if self._xgb_base is None:
+            return xgb_features
+
+        expected_features = self._xgb_base.get_booster().feature_names
+        if not expected_features:
+            return xgb_features
+
+        aligned = xgb_features.copy()
+        for feature in expected_features:
+            if feature not in aligned.columns:
+                aligned[feature] = 0.0
+        return aligned.loc[:, expected_features]
 
     @property
     def model_version(self) -> str:
@@ -298,4 +342,60 @@ def predict(
         expected_home_goals=float(poisson_row["expected_home_goals"]),
         expected_away_goals=float(poisson_row["expected_away_goals"]),
         model_version=state.model_version,
+    )
+
+
+@router.post(
+    "/explain",
+    response_model=PredictExplainResponse,
+    summary="Predict LaLiga match outcome probabilities with SHAP explanation",
+)
+def explain(
+    body: PredictRequest,
+    state: _ModelState = Depends(get_model),
+) -> PredictExplainResponse:
+    xgb_features: pd.DataFrame | None = None
+    top_contributions: list[FeatureContribution] = []
+    explanation_label = "poisson_only"
+
+    if state.is_ensemble:
+        try:
+            ch_client = get_client()
+            xgb_features = fetch_prediction_features(
+                ch_client, body.home_team_id, body.away_team_id
+            )
+            top_contributions, label = state.explain_prediction(xgb_features)
+            if label is not None:
+                explanation_label = label
+        except Exception as exc:
+            log.warning("Failed to build SHAP explanation (%s).", exc)
+
+    try:
+        p_home, p_draw, p_away = state.predict(
+            body.home_team_id, body.away_team_id, xgb_features
+        )
+    except Exception as exc:
+        log.exception("Prediction failed for %s vs %s", body.home_team_id, body.away_team_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Prediction error: {exc}",
+        ) from exc
+
+    input_df = pd.DataFrame([{
+        "home_team_id": body.home_team_id,
+        "away_team_id": body.away_team_id,
+    }])
+    poisson_row = state.poisson_predictor.predict(None, input_df).iloc[0]
+
+    return PredictExplainResponse(
+        home_team_id=body.home_team_id,
+        away_team_id=body.away_team_id,
+        home_win=p_home,
+        draw=p_draw,
+        away_win=p_away,
+        expected_home_goals=float(poisson_row["expected_home_goals"]),
+        expected_away_goals=float(poisson_row["expected_away_goals"]),
+        model_version=state.model_version,
+        top_contributions=top_contributions,
+        explanation_label=explanation_label,
     )

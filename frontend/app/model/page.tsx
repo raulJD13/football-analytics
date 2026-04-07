@@ -1,54 +1,45 @@
 "use client";
 
-import PageTransition from "@/components/ui/PageTransition";
-import KpiCard from "@/components/ui/KpiCard";
 import FeatureImportance from "@/components/charts/FeatureImportance";
-
-// Poisson model metrics from the training run
-const METRICS = {
-  accuracy: 54.6,
-  brierScore: 0.63,
-  logLoss: 1.02,
-  baselineAccuracy: 48.8,
-};
-
-// Poisson model feature contributions (derived from strength parameters)
-const FEATURES = [
-  { name: "home_attack_strength", importance: 0.28 },
-  { name: "away_defence_weakness", importance: 0.22 },
-  { name: "home_advantage (1.2)", importance: 0.20 },
-  { name: "league_avg_goals", importance: 0.15 },
-  { name: "away_attack_strength", importance: 0.10 },
-  { name: "home_defence_rate", importance: 0.05 },
-];
+import { useEffect, useState } from "react";
+import KpiCard from "@/components/ui/KpiCard";
+import PageTransition from "@/components/ui/PageTransition";
+import { fetchModelMetrics, type ModelMetricsResponse } from "@/lib/api";
 
 export default function ModelPage() {
-  const improvement = (METRICS.accuracy - METRICS.baselineAccuracy).toFixed(1);
+  const [metrics, setMetrics] = useState<ModelMetricsResponse | null>(null);
+
+  useEffect(() => {
+    fetchModelMetrics().then(setMetrics).catch(console.error);
+  }, []);
+
+  if (!metrics) {
+    return <PageTransition><div className="text-sm text-text-secondary">Loading model metrics…</div></PageTransition>;
+  }
+
+  const improvement = ((metrics.accuracy - metrics.baseline_accuracy) * 100).toFixed(1);
 
   return (
     <PageTransition>
-      {/* KPI row */}
       <div className="grid grid-cols-4 gap-4">
-        <KpiCard title="Accuracy" value={METRICS.accuracy} suffix="%" decimals={1} />
-        <KpiCard title="Brier score" value={METRICS.brierScore} decimals={2} />
-        <KpiCard title="Log loss" value={METRICS.logLoss} decimals={2} />
-        <KpiCard title="Baseline accuracy" value={METRICS.baselineAccuracy} suffix="%" decimals={1} />
+        <KpiCard title="Accuracy" value={metrics.accuracy * 100} suffix="%" decimals={1} />
+        <KpiCard title="Brier score" value={metrics.brier_score} decimals={3} />
+        <KpiCard title="Log loss" value={metrics.log_loss ?? 0} decimals={3} />
+        <KpiCard title="Baseline accuracy" value={metrics.baseline_accuracy * 100} suffix="%" decimals={1} />
       </div>
 
-      {/* Feature importance chart */}
       <div className="mt-6 rounded-lg border border-border-custom bg-bg-card p-5">
         <h2 className="mb-4 text-sm font-semibold text-text-primary">
-          Feature importance (Poisson model)
+          Feature importance (Production classifier)
         </h2>
-        <FeatureImportance features={FEATURES} />
+        <FeatureImportance features={metrics.feature_importance} />
       </div>
 
-      {/* Note */}
       <div className="mt-4 rounded-lg border border-border-custom bg-bg-card p-4 text-sm text-text-secondary">
         Beats the &quot;always predict home win&quot; baseline by{" "}
         <span className="font-semibold text-win">+{improvement}pp</span>.
-        Model registered in MLflow as <code className="text-indigo">poisson-match-predictor</code>{" "}
-        (Production alias).
+        Model registered in MLflow as <code className="text-indigo">{metrics.model_name}</code>{" "}
+        (Production v{metrics.model_version}).
       </div>
     </PageTransition>
   );
