@@ -5,7 +5,7 @@
 - One DAG = one data source
 - DAG id matches filename (ingest_matches → ingest_matches.py)
 
-## Connections (configured in Airflow UI)
+## Connections (bootstrapped during airflow-init, visible in Airflow UI)
 - clickhouse_default  → ClickHouse on port 8123
 - minio_default       → MinIO on port 9000
 - football_api        → football-data.org (token in .env)

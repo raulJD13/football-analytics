@@ -16,6 +16,8 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from dags._datasets import RAW_STANDINGS_DATASET
+
 log = logging.getLogger(__name__)
 
 FOOTBALL_API_BASE = "https://api.football-data.org/v4"
@@ -129,7 +131,7 @@ def ingest_standings() -> None:
             "Uploaded %d rows to s3://%s/%s", len(df), MINIO_BUCKET, object_key
         )
 
-    @task()
+    @task(outlets=[RAW_STANDINGS_DATASET])
     def load_to_clickhouse(rows: list[dict]) -> None:
         """Insert rows into football.raw_standings (ClickHouse).
 

@@ -26,10 +26,28 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MINIO_ENDPOINT: http://minio:9000
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect dbt-clickhouse mlflow scikit-learn xgboost scipy numpy optuna imbalanced-learn requests"
     command: >
       bash -c "
         airflow db migrate &&
+        airflow connections delete clickhouse_default >/dev/null 2>&1 || true &&
+        airflow connections add clickhouse_default \
+          --conn-type http \
+          --conn-host clickhouse \
+          --conn-port 8123 \
+          --conn-schema $${CLICKHOUSE_DB} &&
+        airflow connections delete minio_default >/dev/null 2>&1 || true &&
+        airflow connections add minio_default \
+          --conn-type aws \
+          --conn-login $${MINIO_ROOT_USER} \
+          --conn-password $${MINIO_ROOT_PASSWORD} \
+          --conn-extra '{\"endpoint_url\": \"http://minio:9000\"}' &&
         airflow users create
           --username admin
           --firstname Admin
@@ -52,9 +70,21 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW_PROJECT_ROOT: /opt/airflow
+      PYTHONPATH: /opt/airflow
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MINIO_ENDPOINT: http://minio:9000
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect dbt-clickhouse mlflow scikit-learn xgboost scipy numpy optuna imbalanced-learn requests"
     volumes:
       - ./dags:/opt/airflow/dags:ro
+      - ./dbt:/opt/airflow/dbt:ro
+      - ./ml:/opt/airflow/ml:ro
+      - ./scripts:/opt/airflow/scripts:ro
+      - ./api:/opt/airflow/api:ro
       - airflow_logs:/opt/airflow/logs
     command: webserver
     healthcheck:
@@ -75,9 +105,21 @@ services:
     environment:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect"
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW_PROJECT_ROOT: /opt/airflow
+      PYTHONPATH: /opt/airflow
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MINIO_ENDPOINT: http://minio:9000
+      _PIP_ADDITIONAL_REQUIREMENTS: "pandas pyarrow boto3 clickhouse-connect dbt-clickhouse mlflow scikit-learn xgboost scipy numpy optuna imbalanced-learn requests"
     volumes:
       - ./dags:/opt/airflow/dags:ro
+      - ./dbt:/opt/airflow/dbt:ro
+      - ./ml:/opt/airflow/ml:ro
+      - ./scripts:/opt/airflow/scripts:ro
+      - ./api:/opt/airflow/api:ro
       - airflow_logs:/opt/airflow/logs
     command: scheduler
     healthcheck:

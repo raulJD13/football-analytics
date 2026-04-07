@@ -419,9 +419,9 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 - [x] **Multi-season standings snapshots** — `raw_standings` currently only holds the current snapshot; archive end-of-season tables for historical accuracy
 
 ### Automation
-- [ ] **`dags/retrain_model.py`** — weekly Airflow DAG that runs dbt → train_poisson → train_classifier → ensemble in sequence every Monday 03:00 UTC
-- [ ] **Configure Airflow connections** — add ClickHouse and MinIO connections via the Airflow UI (currently `_PIP_ADDITIONAL_REQUIREMENTS` installs deps but connections are not pre-configured)
-- [ ] **Scheduled dbt runs** — add a DAG that runs `dbt run && dbt test` after each ingestion DAG completes
+- [x] **`dags/retrain_model.py`** — weekly Airflow DAG that runs dbt → train_poisson → train_classifier → ensemble in sequence every Monday 03:00 UTC
+- [x] **Configure Airflow connections** — add ClickHouse and MinIO connections via the Airflow UI (currently `_PIP_ADDITIONAL_REQUIREMENTS` installs deps but connections are not pre-configured)
+- [x] **Scheduled dbt runs** — add a DAG that runs `dbt run && dbt test` after each ingestion DAG completes
 
 ### Frontend
 - [x] **xG accumulated chart** — per-team xG over the season (requires API-Football data)

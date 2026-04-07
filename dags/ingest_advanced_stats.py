@@ -20,6 +20,8 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from dags._datasets import RAW_ADVANCED_STATS_DATASET
+
 log = logging.getLogger(__name__)
 
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
@@ -243,7 +245,7 @@ def ingest_advanced_stats() -> None:
         s3.put_object(Bucket=MINIO_BUCKET, Key=object_key, Body=buffer.getvalue())
         log.info("Uploaded %d rows to s3://%s/%s", len(df), MINIO_BUCKET, object_key)
 
-    @task()
+    @task(outlets=[RAW_ADVANCED_STATS_DATASET])
     def load_to_clickhouse(rows: list[dict]) -> None:
         import clickhouse_connect
 
