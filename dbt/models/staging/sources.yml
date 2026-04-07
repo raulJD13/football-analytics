@@ -47,3 +47,39 @@ sources:
           - name: goal_difference
           - name: form
             description: "Last-5 form string provided by the API, e.g. W,W,D,L,W."
+          - name: season_start_date
+          - name: season_end_date
+          - name: snapshot_date
+
+      - name: advanced_stats
+        identifier: raw_advanced_stats
+        description: "Advanced match stats matched to football-data match IDs."
+        columns:
+          - name: match_id
+          - name: api_football_fixture_id
+          - name: match_date
+          - name: season_start_date
+          - name: home_team_id
+          - name: away_team_id
+          - name: home_shots_on_target
+          - name: away_shots_on_target
+          - name: home_total_shots
+          - name: away_total_shots
+          - name: home_possession_pct
+          - name: away_possession_pct
+          - name: home_expected_goals
+          - name: away_expected_goals
+
+      - name: scorers
+        identifier: raw_scorers
+        description: "Top scorers snapshot from football-data.org."
+        columns:
+          - name: snapshot_date
+          - name: season_start_date
+          - name: season_end_date
+          - name: rank
+          - name: player_id
+          - name: player_name
+          - name: team_id
+          - name: team_name
+          - name: goals

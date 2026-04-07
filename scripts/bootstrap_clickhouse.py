@@ -101,6 +101,10 @@ def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
     data = _api_get(path, api_key)
     groups = data.get("standings", [])
     table = next((g["table"] for g in groups if g["type"] == "TOTAL"), [])
+    season_meta = data.get("season", {})
+    season_start = season_meta.get("startDate")
+    season_end = season_meta.get("endDate")
+    snapshot_date = season_end or season_start
     rows = []
     for entry in table:
         team = entry.get("team", {})
@@ -118,6 +122,9 @@ def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
             entry["goalsAgainst"],
             entry["goalDifference"],
             entry.get("form"),
+            season_start,
+            season_end,
+            snapshot_date,
         ])
     log.info("Fetched standings for %d teams", len(rows))
     return rows
@@ -127,6 +134,7 @@ STANDINGS_COLUMNS = [
     "position", "team_id", "team_name", "team_short_name",
     "played_games", "won", "draw", "lost", "points",
     "goals_for", "goals_against", "goal_difference", "form",
+    "season_start_date", "season_end_date", "snapshot_date",
 ]
 
 

@@ -65,3 +65,41 @@ models:
         description: "Full team name."
         tests:
           - not_null
+
+  - name: stg_standings
+    description: "Versioned standings snapshots with season metadata."
+    columns:
+      - name: team_id
+        tests:
+          - not_null
+      - name: season_start_date
+        tests:
+          - not_null
+      - name: snapshot_date
+        tests:
+          - not_null
+
+  - name: stg_advanced_stats
+    description: "Advanced match stats matched to football-data match IDs."
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+      - name: match_date
+        tests:
+          - not_null
+      - name: home_expected_goals
+      - name: away_expected_goals
+
+  - name: stg_scorers
+    description: "Top scorers snapshots from football-data.org."
+    columns:
+      - name: snapshot_date
+        tests:
+          - not_null
+      - name: player_id
+        tests:
+          - not_null
+      - name: goals
+        tests:
+          - not_null

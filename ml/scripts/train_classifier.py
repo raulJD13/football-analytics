@@ -45,6 +45,11 @@ LABEL_ENCODER.fit(["A", "D", "H"])  # 0=A, 1=D, 2=H
 FEATURES = [
     "home_form_5_ppg",
     "away_form_5_ppg",
+    "home_xg_for_avg_last_5",
+    "away_xg_for_avg_last_5",
+    "xg_diff",
+    "shots_on_target_diff",
+    "possession_diff",
     "home_attack_strength",
     "away_defence_weakness",
     "home_elo_diff",
@@ -105,6 +110,12 @@ def load_features(client: clickhouse_connect.driver.Client) -> pd.DataFrame:
             away_form_5,
             home_form_matches_available,
             away_form_matches_available,
+            home_xg_for_avg_last_5,
+            away_xg_for_avg_last_5,
+            home_shots_on_target_avg_last_5,
+            away_shots_on_target_avg_last_5,
+            home_possession_avg_last_5,
+            away_possession_avg_last_5,
             home_attack_strength,
             away_defence_weakness,
             h2h_home_win_rate,
@@ -133,6 +144,21 @@ def build_feature_matrix(
     feat["away_form_5_ppg"] = (
         df["away_form_5"] / df["away_form_matches_available"].clip(lower=1)
     ).astype(float)
+
+    feat["home_xg_for_avg_last_5"] = df["home_xg_for_avg_last_5"].astype(float)
+    feat["away_xg_for_avg_last_5"] = df["away_xg_for_avg_last_5"].astype(float)
+    feat["xg_diff"] = (
+        df["home_xg_for_avg_last_5"].astype(float)
+        - df["away_xg_for_avg_last_5"].astype(float)
+    )
+    feat["shots_on_target_diff"] = (
+        df["home_shots_on_target_avg_last_5"].astype(float)
+        - df["away_shots_on_target_avg_last_5"].astype(float)
+    )
+    feat["possession_diff"] = (
+        df["home_possession_avg_last_5"].astype(float)
+        - df["away_possession_avg_last_5"].astype(float)
+    )
 
     feat["home_attack_strength"] = df["home_attack_strength"].astype(float)
     feat["away_defence_weakness"] = df["away_defence_weakness"].astype(float)

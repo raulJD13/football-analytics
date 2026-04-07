@@ -96,6 +96,30 @@ models:
         description: "Away team points in the 5 matches before this one (0 if first match)."
         tests:
           - not_null
+      - name: home_xg_for_avg_last_5
+        description: "Home team's rolling xG-for average from the previous 5 matches."
+        tests:
+          - not_null
+      - name: away_xg_for_avg_last_5
+        description: "Away team's rolling xG-for average from the previous 5 matches."
+        tests:
+          - not_null
+      - name: home_shots_on_target_avg_last_5
+        description: "Home team's rolling shots-on-target average from the previous 5 matches."
+        tests:
+          - not_null
+      - name: away_shots_on_target_avg_last_5
+        description: "Away team's rolling shots-on-target average from the previous 5 matches."
+        tests:
+          - not_null
+      - name: home_possession_avg_last_5
+        description: "Home team's rolling possession average from the previous 5 matches."
+        tests:
+          - not_null
+      - name: away_possession_avg_last_5
+        description: "Away team's rolling possession average from the previous 5 matches."
+        tests:
+          - not_null
       - name: h2h_home_win_rate
         description: "Historical home win rate for this exact fixture. Defaults to 0.45."
         tests:

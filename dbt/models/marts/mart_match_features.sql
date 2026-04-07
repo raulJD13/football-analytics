@@ -33,6 +33,10 @@ form as (
     from {{ ref('int_form_last_5') }}
 ),
 
+advanced_form as (
+    select * from {{ ref('int_advanced_form_last_5') }}
+),
+
 -- Days of rest since each team's previous match
 rest as (
     select
@@ -58,15 +62,8 @@ rest_days as (
     from rest
 ),
 
--- H2H home win rate for each (home_team, away_team) pair
 h2h as (
-    select
-        home_team_id,
-        away_team_id,
-        toFloat64(countIf(winner = 'HOME_TEAM')) / count()          as h2h_home_win_rate,
-        count()                                                     as h2h_matches_played
-    from matches
-    group by home_team_id, away_team_id
+    select * from {{ ref('int_h2h') }}
 )
 
 select
@@ -94,6 +91,14 @@ select
     coalesce(hf.form_matches_available, 0)                         as home_form_matches_available,
     coalesce(af.form_matches_available, 0)                         as away_form_matches_available,
 
+    -- Advanced rolling stats (last 5 matches before this one)
+    coalesce(toFloat64(haf.xg_for_avg_last_5), 1.2)               as home_xg_for_avg_last_5,
+    coalesce(toFloat64(aaf.xg_for_avg_last_5), 1.0)               as away_xg_for_avg_last_5,
+    coalesce(toFloat64(haf.shots_on_target_for_avg_last_5), 4.0)  as home_shots_on_target_avg_last_5,
+    coalesce(toFloat64(aaf.shots_on_target_for_avg_last_5), 3.5)  as away_shots_on_target_avg_last_5,
+    coalesce(toFloat64(haf.possession_avg_last_5), 50.0)          as home_possession_avg_last_5,
+    coalesce(toFloat64(aaf.possession_avg_last_5), 50.0)          as away_possession_avg_last_5,
+
     -- Attack / defence strength (from mart_team_stats)
     coalesce(toFloat64(hts.home_attack_strength), 1.0)             as home_attack_strength,
     coalesce(toFloat64(hts.home_avg_goals_conceded), 1.0)
@@ -118,6 +123,8 @@ select
 from matches m
 left join form           hf   on hf.team_id  = m.home_team_id and hf.match_id = m.match_id
 left join form           af   on af.team_id  = m.away_team_id and af.match_id = m.match_id
+left join advanced_form  haf  on haf.team_id = m.home_team_id and haf.match_id = m.match_id
+left join advanced_form  aaf  on aaf.team_id = m.away_team_id and aaf.match_id = m.match_id
 left join team_stats     hts  on hts.team_id = m.home_team_id
 left join team_stats     ats  on ats.team_id = m.away_team_id
 left join standings      hs   on hs.season_start_date = m.season_start_date
@@ -126,7 +133,6 @@ left join standings      hs   on hs.season_start_date = m.season_start_date
 left join standings      as_  on as_.season_start_date = m.season_start_date
                               and as_.snapshot_matchday = m.matchday
                               and as_.team_id = m.away_team_id
-left join h2h                 on h2h.home_team_id = m.home_team_id
-                              and h2h.away_team_id = m.away_team_id
+left join h2h                 on h2h.match_id = m.match_id
 left join rest_days      hr   on hr.team_id  = m.home_team_id and hr.match_id = m.match_id
 left join rest_days      ar   on ar.team_id  = m.away_team_id and ar.match_id = m.match_id

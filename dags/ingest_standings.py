@@ -55,19 +55,28 @@ def ingest_standings() -> None:
         url = f"{FOOTBALL_API_BASE}/competitions/{LALIGA_CODE}/standings"
         response = requests.get(url, headers=headers, timeout=30)
         response.raise_for_status()
+        payload = response.json()
 
         # The API returns standings grouped by type (TOTAL, HOME, AWAY).
         # We keep the TOTAL table.
-        standings_groups = response.json().get("standings", [])
+        standings_groups = payload.get("standings", [])
         total_table = next(
             (g["table"] for g in standings_groups if g["type"] == "TOTAL"), []
         )
+        season = payload.get("season", {})
         log.info("Fetched standings with %d teams", len(total_table))
-        return total_table
+        return [{
+            "table": total_table,
+            "season_start_date": season.get("startDate"),
+            "season_end_date": season.get("endDate"),
+        }]
 
     @task()
-    def transform_standings(table: list[dict]) -> list[dict]:
+    def transform_standings(payloads: list[dict]) -> list[dict]:
         """Flatten the standings table into a flat row per team."""
+        payload = payloads[0]
+        table = payload["table"]
+        snapshot_date = datetime.utcnow().strftime("%Y-%m-%d")
         rows = []
         for entry in table:
             team = entry.get("team", {})
@@ -86,6 +95,9 @@ def ingest_standings() -> None:
                     "goals_against": entry["goalsAgainst"],
                     "goal_difference": entry["goalDifference"],
                     "form": entry.get("form"),
+                    "season_start_date": payload["season_start_date"],
+                    "season_end_date": payload["season_end_date"],
+                    "snapshot_date": snapshot_date,
                 }
             )
         log.info("Transformed standings for %d teams", len(rows))
@@ -136,6 +148,7 @@ def ingest_standings() -> None:
             "position", "team_id", "team_name", "team_short_name",
             "played_games", "won", "draw", "lost", "points",
             "goals_for", "goals_against", "goal_difference", "form",
+            "season_start_date", "season_end_date", "snapshot_date",
         ]
         data = [[row.get(c) for c in column_names] for row in rows]
         client.insert("raw_standings", data, column_names=column_names)

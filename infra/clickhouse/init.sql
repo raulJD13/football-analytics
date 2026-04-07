@@ -44,8 +44,55 @@ CREATE TABLE IF NOT EXISTS football.raw_standings
     goals_against    Int32,
     goal_difference  Int32,
     form             Nullable(String),
-    snapshot_date    Date DEFAULT today()
+    season_start_date Date,
+    season_end_date   Date,
+    snapshot_date     Date
 )
 ENGINE = ReplacingMergeTree(snapshot_date)
-ORDER BY (team_id, snapshot_date)
+ORDER BY (season_start_date, team_id, snapshot_date)
+SETTINGS index_granularity = 8192;
+
+-- raw_advanced_stats: API-Football fixture statistics matched to football-data match IDs
+CREATE TABLE IF NOT EXISTS football.raw_advanced_stats
+(
+    match_id               UInt32,
+    api_football_fixture_id UInt32,
+    match_date             Date,
+    season_start_date      Date,
+    home_team_id           UInt32,
+    away_team_id           UInt32,
+    home_team_name         String,
+    away_team_name         String,
+    home_shots_on_target   Nullable(UInt16),
+    away_shots_on_target   Nullable(UInt16),
+    home_total_shots       Nullable(UInt16),
+    away_total_shots       Nullable(UInt16),
+    home_possession_pct    Nullable(Float64),
+    away_possession_pct    Nullable(Float64),
+    home_expected_goals    Nullable(Float64),
+    away_expected_goals    Nullable(Float64),
+    fetched_at             DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(fetched_at)
+ORDER BY (match_id)
+SETTINGS index_granularity = 8192;
+
+-- raw_scorers: top scorers snapshot from football-data.org
+CREATE TABLE IF NOT EXISTS football.raw_scorers
+(
+    snapshot_date      Date,
+    season_start_date  Date,
+    season_end_date    Date,
+    rank               UInt16,
+    player_id          UInt32,
+    player_name        String,
+    team_id            UInt32,
+    team_name          String,
+    played_matches     Nullable(UInt16),
+    goals              UInt16,
+    assists            Nullable(UInt16),
+    penalties          Nullable(UInt16)
+)
+ENGINE = ReplacingMergeTree(snapshot_date)
+ORDER BY (season_start_date, rank, player_id)
 SETTINGS index_granularity = 8192;

@@ -117,6 +117,48 @@ def fetch_prediction_features(
     home_form_ppg = home_form_pts / max(home_form_n, 1)
     away_form_ppg = away_form_pts / max(away_form_n, 1)
 
+    # ── 2b. Current advanced rolling stats ───────────────────────────────────
+    def _advanced_form(team_id: int) -> tuple[float, float, float]:
+        row_df = client.query_df("""
+            SELECT
+                multiIf(
+                    home_team_id = {tid},
+                    home_xg_for_avg_last_5,
+                    away_team_id = {tid},
+                    away_xg_for_avg_last_5,
+                    0
+                ) AS xg_for_avg_last_5,
+                multiIf(
+                    home_team_id = {tid},
+                    home_shots_on_target_avg_last_5,
+                    away_team_id = {tid},
+                    away_shots_on_target_avg_last_5,
+                    0
+                ) AS shots_on_target_avg_last_5,
+                multiIf(
+                    home_team_id = {tid},
+                    home_possession_avg_last_5,
+                    away_team_id = {tid},
+                    away_possession_avg_last_5,
+                    0
+                ) AS possession_avg_last_5
+            FROM football.mart_match_features
+            WHERE home_team_id = {tid} OR away_team_id = {tid}
+            ORDER BY match_date DESC
+            LIMIT 1
+        """.format(tid=team_id))
+        if row_df.empty:
+            return 1.2, 4.0, 50.0
+        row = row_df.iloc[0]
+        return (
+            float(row["xg_for_avg_last_5"]),
+            float(row["shots_on_target_avg_last_5"]),
+            float(row["possession_avg_last_5"]),
+        )
+
+    home_xg, home_shots, home_possession = _advanced_form(home_team_id)
+    away_xg, away_shots, away_possession = _advanced_form(away_team_id)
+
     # ── 3. H2H (this exact (home, away) pair only) ────────────────────────────
     h2h_df = client.query_df("""
         SELECT
@@ -171,6 +213,11 @@ def fetch_prediction_features(
     row: dict[str, float] = {
         "home_form_5_ppg":       home_form_ppg,
         "away_form_5_ppg":       away_form_ppg,
+        "home_xg_for_avg_last_5": home_xg,
+        "away_xg_for_avg_last_5": away_xg,
+        "xg_diff":               home_xg - away_xg,
+        "shots_on_target_diff":  home_shots - away_shots,
+        "possession_diff":       home_possession - away_possession,
         "home_attack_strength":  home_attack,
         "away_defence_weakness": away_defence,
         "home_elo_diff":         home_elo - away_elo,

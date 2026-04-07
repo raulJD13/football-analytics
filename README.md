@@ -396,7 +396,6 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 | **API tier** | football-data.org free tier: 10 req/min and access to the 3 most recent seasons only |
 | **Static attack/defence strength** | `mart_team_stats` aggregates the whole season. Strength early in the season (small sample) carries the same weight as late in the season |
 | **Ensemble calibration** | With one season of data the Brier-based guard falls back to XGBoost-only because Poisson hurts calibration. With more seasons, a blend may outperform either model individually |
-| **No xG data** | Expected-goals features require API-Football (100 req/day free tier); not yet ingested |
 | **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` reinstalls packages on every container start. Build a custom image for faster restarts |
 | **Single-league** | Only LaLiga (PD) ingested. Other competitions require additional DAGs |
 
@@ -413,11 +412,11 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 - [x] **Draw prediction** — the model systematically underestimates draws (hardest class); explore SMOTE oversampling or a dedicated draw-probability sub-model
 
 ### Data
-- [ ] **Ingest xG data** — connect API-Football (`/fixtures/statistics`) to get shots on target, possession, xG per match; add as features
-- [ ] **`dags/ingest_advanced_stats.py`** — Airflow DAG to automate API-Football ingestion (100 req/day free limit requires careful rate management)
-- [ ] **`dags/ingest_scorers.py`** — top scorers per matchday for future player-level features
-- [ ] **`intermediate/int_h2h.sql`** — materialise H2H stats as a proper dbt model instead of computing them inline in `mart_match_features`
-- [ ] **Multi-season standings snapshots** — `raw_standings` currently only holds the current snapshot; archive end-of-season tables for historical accuracy
+- [x] **Ingest xG data** — connect API-Football (`/fixtures/statistics`) to get shots on target, possession, xG per match; add as features
+- [x] **`dags/ingest_advanced_stats.py`** — Airflow DAG to automate API-Football ingestion (100 req/day free limit requires careful rate management)
+- [x] **`dags/ingest_scorers.py`** — top scorers per matchday for future player-level features
+- [x] **`intermediate/int_h2h.sql`** — materialise H2H stats as a proper dbt model instead of computing them inline in `mart_match_features`
+- [x] **Multi-season standings snapshots** — `raw_standings` currently only holds the current snapshot; archive end-of-season tables for historical accuracy
 
 ### Automation
 - [ ] **`dags/retrain_model.py`** — weekly Airflow DAG that runs dbt → train_poisson → train_classifier → ensemble in sequence every Monday 03:00 UTC

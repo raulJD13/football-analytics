@@ -86,6 +86,36 @@ models:
         tests:
           - not_null
 
+  - name: int_h2h
+    description: >
+      Exact-fixture head-to-head metrics computed before each match starts.
+    columns:
+      - name: match_id
+        tests:
+          - not_null
+      - name: home_team_id
+        tests:
+          - not_null
+      - name: away_team_id
+        tests:
+          - not_null
+      - name: h2h_home_win_rate
+        tests:
+          - not_null
+
+  - name: int_advanced_form_last_5
+    description: >
+      Rolling advanced stats from the 5 previous matches for each team.
+    columns:
+      - name: team_id
+        tests:
+          - not_null
+      - name: match_id
+        tests:
+          - not_null
+      - name: xg_for_avg_last_5
+      - name: xg_against_avg_last_5
+
   - name: int_standings_snapshot
     description: >
       Standings snapshot shifted by matchday. Rows with snapshot_matchday N
