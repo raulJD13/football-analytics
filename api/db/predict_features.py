@@ -71,10 +71,12 @@ def fetch_prediction_features(
         WHERE league_code = {league_code:String}
           AND season_start_date >= toDate({season_start:String})
           AND season_start_date < addYears(toDate({season_start:String}), 1)
-          AND team_id IN ({home}, {away})
-    """.format(home=home_team_id, away=away_team_id), parameters={
+          AND team_id IN ({home:UInt32}, {away:UInt32})
+    """, parameters={
         "league_code": league_code,
         "season_start": season_start,
+        "home": home_team_id,
+        "away": away_team_id,
     })
 
     def _stat(team_id: int, col: str, default: float) -> float:
@@ -110,22 +112,23 @@ def fetch_prediction_features(
         """Return (form_points, form_n) from most recent match for team."""
         row_df = client.query_df("""
             SELECT
-                multiIf(home_team_id = {tid}, home_form_5,
-                        away_team_id = {tid}, away_form_5,
+                multiIf(home_team_id = {team_id:UInt32}, home_form_5,
+                        away_team_id = {team_id:UInt32}, away_form_5,
                         0)                              AS form_pts,
-                multiIf(home_team_id = {tid}, home_form_matches_available,
-                        away_team_id = {tid}, away_form_matches_available,
+                multiIf(home_team_id = {team_id:UInt32}, home_form_matches_available,
+                        away_team_id = {team_id:UInt32}, away_form_matches_available,
                         0)                              AS form_n
             FROM football.mart_match_features
             WHERE league_code = {league_code:String}
               AND season_start_date >= toDate({season_start:String})
               AND season_start_date < addYears(toDate({season_start:String}), 1)
-              AND (home_team_id = {tid} OR away_team_id = {tid})
+              AND (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
             ORDER BY match_date DESC
             LIMIT 1
-        """.format(tid=team_id), parameters={
+        """, parameters={
             "league_code": league_code,
             "season_start": season_start,
+            "team_id": team_id,
         })
         if row_df.empty:
             return 0.0, 0.0
@@ -142,23 +145,23 @@ def fetch_prediction_features(
         row_df = client.query_df("""
             SELECT
                 multiIf(
-                    home_team_id = {tid},
+                    home_team_id = {team_id:UInt32},
                     home_xg_for_avg_last_5,
-                    away_team_id = {tid},
+                    away_team_id = {team_id:UInt32},
                     away_xg_for_avg_last_5,
                     0
                 ) AS xg_for_avg_last_5,
                 multiIf(
-                    home_team_id = {tid},
+                    home_team_id = {team_id:UInt32},
                     home_shots_on_target_avg_last_5,
-                    away_team_id = {tid},
+                    away_team_id = {team_id:UInt32},
                     away_shots_on_target_avg_last_5,
                     0
                 ) AS shots_on_target_avg_last_5,
                 multiIf(
-                    home_team_id = {tid},
+                    home_team_id = {team_id:UInt32},
                     home_possession_avg_last_5,
-                    away_team_id = {tid},
+                    away_team_id = {team_id:UInt32},
                     away_possession_avg_last_5,
                     0
                 ) AS possession_avg_last_5
@@ -166,12 +169,13 @@ def fetch_prediction_features(
             WHERE league_code = {league_code:String}
               AND season_start_date >= toDate({season_start:String})
               AND season_start_date < addYears(toDate({season_start:String}), 1)
-              AND (home_team_id = {tid} OR away_team_id = {tid})
+              AND (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
             ORDER BY match_date DESC
             LIMIT 1
-        """.format(tid=team_id), parameters={
+        """, parameters={
             "league_code": league_code,
             "season_start": season_start,
+            "team_id": team_id,
         })
         if row_df.empty:
             return 1.2, 4.0, 50.0
@@ -194,12 +198,14 @@ def fetch_prediction_features(
         WHERE league_code = {league_code:String}
           AND season_start_date >= toDate({season_start:String})
           AND season_start_date < addYears(toDate({season_start:String}), 1)
-          AND home_team_id = {home}
-          AND away_team_id = {away}
+          AND home_team_id = {home:UInt32}
+          AND away_team_id = {away:UInt32}
           AND result IN ('H', 'D', 'A')
-    """.format(home=home_team_id, away=away_team_id), parameters={
+    """, parameters={
         "league_code": league_code,
         "season_start": season_start,
+        "home": home_team_id,
+        "away": away_team_id,
     })
 
     if h2h_df.empty or int(h2h_df.iloc[0]["h2h_matches_played"]) == 0:
@@ -218,10 +224,11 @@ def fetch_prediction_features(
             WHERE league_code = {league_code:String}
               AND season_start_date >= toDate({season_start:String})
               AND season_start_date < addYears(toDate({season_start:String}), 1)
-              AND (home_team_id = {tid} OR away_team_id = {tid})
-        """.format(tid=team_id), parameters={
+              AND (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
+        """, parameters={
             "league_code": league_code,
             "season_start": season_start,
+            "team_id": team_id,
         })
         if row_df.empty or pd.isna(row_df.iloc[0]["last_match"]):
             return float(MAX_REST_DAYS)
@@ -239,10 +246,12 @@ def fetch_prediction_features(
         WHERE league_code = {league_code:String}
           AND season_start_date >= toDate({season_start:String})
           AND season_start_date < addYears(toDate({season_start:String}), 1)
-          AND team_id IN ({home}, {away})
-    """.format(home=home_team_id, away=away_team_id), parameters={
+          AND team_id IN ({home:UInt32}, {away:UInt32})
+    """, parameters={
         "league_code": league_code,
         "season_start": season_start,
+        "home": home_team_id,
+        "away": away_team_id,
     })
 
     def _position(team_id: int) -> int:

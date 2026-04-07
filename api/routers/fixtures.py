@@ -14,6 +14,7 @@ from api.db.fixtures import (
     fetch_team_xg_series,
 )
 from api.db.predict_features import fetch_prediction_features
+from api.db.standings import current_season_start_year
 from api.db.teams import fetch_team_form
 from api.routers.predict import get_model
 from api.schemas.fixtures import FixtureEntry, FixturesResponse, MatchDetailResponse, HeadToHeadMatch
@@ -35,7 +36,12 @@ def fixtures(
     rows = fetch_fixtures(client, league_code=league, season_start_year=season, limit=limit)
     state = get_model()
     entries: list[FixtureEntry] = []
-    current_season = season or (rows[0]["match_date"].year if rows else 2024)
+    if season is not None:
+        current_season = season
+    elif rows:
+        current_season = current_season_start_year(rows[0]["match_date"])
+    else:
+        current_season = current_season_start_year()
 
     for row in rows:
         prediction = {"home_win": None, "draw": None, "away_win": None, "expected_home_goals": None, "expected_away_goals": None}
@@ -84,7 +90,13 @@ def fixture_detail(match_id: int = Path(..., gt=0)) -> MatchDetailResponse:
 
     try:
         if state.is_ensemble:
-            xgb_features = fetch_prediction_features(client, fixture["home_team_id"], fixture["away_team_id"])
+            fixture_season = current_season_start_year(fixture["match_date"])
+            xgb_features = fetch_prediction_features(
+                client,
+                fixture["home_team_id"],
+                fixture["away_team_id"],
+                season=fixture_season,
+            )
         home_win, draw, away_win = state.predict(fixture["home_team_id"], fixture["away_team_id"], xgb_features)
         poisson_row = state.poisson_predictor.predict(None, __import__("pandas").DataFrame([{
             "home_team_id": fixture["home_team_id"],

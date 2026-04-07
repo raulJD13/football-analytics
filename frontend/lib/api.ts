@@ -205,7 +205,7 @@ export function fetchModelMetrics(): Promise<ModelMetricsResponse> {
 }
 
 export function fetchFixtures(limit = 12): Promise<FixturesResponse> {
-  return get(`/api/fixtures?limit=${limit}`);
+  return get(`/api/fixtures?limit=${limit}&season=${currentSeasonStartYear()}`);
 }
 
 export function fetchMatchDetail(matchId: number): Promise<MatchDetailResponse> {
