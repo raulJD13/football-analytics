@@ -16,7 +16,12 @@ with matches as (
 ),
 
 standings as (
-    select team_id, position from {{ ref('mart_standings') }}
+    select
+        season_start_date,
+        snapshot_matchday,
+        team_id,
+        position
+    from {{ ref('int_standings_snapshot') }}
 ),
 
 team_stats as (
@@ -115,8 +120,12 @@ left join form           hf   on hf.team_id  = m.home_team_id and hf.match_id = 
 left join form           af   on af.team_id  = m.away_team_id and af.match_id = m.match_id
 left join team_stats     hts  on hts.team_id = m.home_team_id
 left join team_stats     ats  on ats.team_id = m.away_team_id
-left join standings      hs   on hs.team_id  = m.home_team_id
-left join standings      as_  on as_.team_id = m.away_team_id
+left join standings      hs   on hs.season_start_date = m.season_start_date
+                              and hs.snapshot_matchday = m.matchday
+                              and hs.team_id = m.home_team_id
+left join standings      as_  on as_.season_start_date = m.season_start_date
+                              and as_.snapshot_matchday = m.matchday
+                              and as_.team_id = m.away_team_id
 left join h2h                 on h2h.home_team_id = m.home_team_id
                               and h2h.away_team_id = m.away_team_id
 left join rest_days      hr   on hr.team_id  = m.home_team_id and hr.match_id = m.match_id

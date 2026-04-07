@@ -27,9 +27,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+import joblib
 import numpy as np
 import pandas as pd
-from xgboost import XGBClassifier
 
 import clickhouse_connect
 import mlflow
@@ -88,19 +88,30 @@ def _load_poisson(mlflow_uri: str) -> tuple[PoissonPredictor, str]:
     return predictor, mv.version
 
 
-def _load_xgb(mlflow_uri: str) -> tuple[XGBClassifier, str]:
-    """Return (XGBClassifier, version_string) from MLflow Production alias."""
+def _load_xgb(mlflow_uri: str) -> tuple[object, str]:
+    """Return classifier object with predict_proba from MLflow Production alias."""
     client = mlflow.tracking.MlflowClient(mlflow_uri)
     mv = client.get_model_version_by_alias(XGB_MODEL, MODEL_ALIAS)
     with tempfile.TemporaryDirectory() as tmpdir:
-        path = mlflow.artifacts.download_artifacts(
-            run_id=mv.run_id,
-            artifact_path="model/xgb_model.json",
-            tracking_uri=mlflow_uri,
-            dst_path=tmpdir,
-        )
-        model = XGBClassifier()
-        model.load_model(path)
+        try:
+            path = mlflow.artifacts.download_artifacts(
+                run_id=mv.run_id,
+                artifact_path="model/classifier.joblib",
+                tracking_uri=mlflow_uri,
+                dst_path=tmpdir,
+            )
+            model = joblib.load(path)
+        except mlflow.exceptions.MlflowException:
+            from xgboost import XGBClassifier
+
+            path = mlflow.artifacts.download_artifacts(
+                run_id=mv.run_id,
+                artifact_path="model/xgb_model.json",
+                tracking_uri=mlflow_uri,
+                dst_path=tmpdir,
+            )
+            model = XGBClassifier()
+            model.load_model(path)
     log.info("Loaded XGBoost model version %s (run %s)", mv.version, mv.run_id)
     return model, mv.version
 
@@ -115,14 +126,14 @@ def _poisson_probs_hda(predictor: PoissonPredictor, df: pd.DataFrame) -> np.ndar
     return out[["home_win", "draw", "away_win"]].to_numpy(dtype=float)
 
 
-def _xgb_probs_hda(model: XGBClassifier, X: pd.DataFrame) -> np.ndarray:
-    """Return (n, 3) array in [H, D, A] order from XGBClassifier.
+def _xgb_probs_hda(model: object, X: pd.DataFrame) -> np.ndarray:
+    """Return (n, 3) array in [H, D, A] order from classifier.
 
     XGBoost predict_proba columns are ordered by label index:
         col 0 = A (label 0), col 1 = D (label 1), col 2 = H (label 2)
     Reorder to [H, D, A] = columns [2, 1, 0].
     """
-    probs_adh = model.predict_proba(X)     # (n, 3): A D H
+    probs_adh = model.predict_proba(X)     # type: ignore[attr-defined]
     return probs_adh[:, [2, 1, 0]]         # → H D A
 
 

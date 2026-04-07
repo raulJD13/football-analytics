@@ -8,6 +8,8 @@ home_results as (
     select
         match_id,
         match_date,
+        matchday,
+        season_start_date,
         home_team_id                            as team_id,
         away_team_id                            as opponent_id,
         1                                       as is_home,
@@ -30,6 +32,8 @@ away_results as (
     select
         match_id,
         match_date,
+        matchday,
+        season_start_date,
         away_team_id                            as team_id,
         home_team_id                            as opponent_id,
         0                                       as is_home,

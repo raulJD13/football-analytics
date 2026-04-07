@@ -394,10 +394,8 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 | Area | Detail |
 |---|---|
 | **API tier** | football-data.org free tier: 10 req/min and access to the 3 most recent seasons only |
-| **`position_diff` leakage** | `mart_match_features` uses current-season standings for all historical matches. Standings at match time would be more accurate |
 | **Static attack/defence strength** | `mart_team_stats` aggregates the whole season. Strength early in the season (small sample) carries the same weight as late in the season |
 | **Ensemble calibration** | With one season of data the Brier-based guard falls back to XGBoost-only because Poisson hurts calibration. With more seasons, a blend may outperform either model individually |
-| **No Elo ratings** | Team strength is captured by seasonal averages, not a dynamic rating that updates after each match |
 | **No xG data** | Expected-goals features require API-Football (100 req/day free tier); not yet ingested |
 | **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` reinstalls packages on every container start. Build a custom image for faster restarts |
 | **Single-league** | Only LaLiga (PD) ingested. Other competitions require additional DAGs |
@@ -407,12 +405,12 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 ## Next steps
 
 ### Model quality
-- [ ] **Elo ratings** — compute a dynamic Elo rating per team updated after every match; add `home_elo_diff` as feature; expected +3–5 pp accuracy
-- [ ] **Fix `position_diff` temporal leakage** — store standings snapshot per matchday in dbt (`int_standings_snapshot`) so position at match time is used, not current position
-- [ ] **Season-weighted Poisson** — give more weight to recent matches when computing attack/defence strengths; reduces the influence of results from 2 seasons ago
-- [ ] **Hyperparameter tuning** — run Optuna over XGBoost `max_depth`, `learning_rate`, `min_child_weight`; current params are conservative defaults
-- [ ] **Calibration layer** — add Platt scaling or isotonic regression on top of XGBoost probabilities; improves Brier score independently of accuracy
-- [ ] **Draw prediction** — the model systematically underestimates draws (hardest class); explore SMOTE oversampling or a dedicated draw-probability sub-model
+- [x] **Elo ratings** — compute a dynamic Elo rating per team updated after every match; add `home_elo_diff` as feature; expected +3–5 pp accuracy
+- [x] **Fix `position_diff` temporal leakage** — store standings snapshot per matchday in dbt (`int_standings_snapshot`) so position at match time is used, not current position
+- [x] **Season-weighted Poisson** — give more weight to recent matches when computing attack/defence strengths; reduces the influence of results from 2 seasons ago
+- [x] **Hyperparameter tuning** — run Optuna over XGBoost `max_depth`, `learning_rate`, `min_child_weight`; current params are conservative defaults
+- [x] **Calibration layer** — add Platt scaling or isotonic regression on top of XGBoost probabilities; improves Brier score independently of accuracy
+- [x] **Draw prediction** — the model systematically underestimates draws (hardest class); explore SMOTE oversampling or a dedicated draw-probability sub-model
 
 ### Data
 - [ ] **Ingest xG data** — connect API-Football (`/fixtures/statistics`) to get shots on target, possession, xG per match; add as features

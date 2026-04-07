@@ -14,6 +14,14 @@ models:
         description: "Date the match was played."
         tests:
           - not_null
+      - name: matchday
+        description: "Season matchday for this fixture."
+        tests:
+          - not_null
+      - name: season_start_date
+        description: "Season identifier anchored to the season start date."
+        tests:
+          - not_null
       - name: team_id
         description: "Team this row belongs to."
         tests:
@@ -75,5 +83,32 @@ models:
         description: "Losses in the 5 matches before this one."
       - name: form_matches_available
         description: "Number of prior matches available (up to 5). Useful for early-season rows."
+        tests:
+          - not_null
+
+  - name: int_standings_snapshot
+    description: >
+      Standings snapshot shifted by matchday. Rows with snapshot_matchday N
+      represent league positions before matchday N starts.
+    columns:
+      - name: season_start_date
+        description: "Season identifier anchored to the season start date."
+        tests:
+          - not_null
+      - name: snapshot_matchday
+        description: "Matchday this snapshot should be used for."
+        tests:
+          - not_null
+      - name: team_id
+        description: "Team identifier."
+        tests:
+          - not_null
+          - relationships:
+              to: ref('stg_teams')
+              field: team_id
+      - name: position
+        description: "Position before the given matchday starts. NULL on matchday 1."
+      - name: points
+        description: "Points accumulated before the given matchday."
         tests:
           - not_null

@@ -25,11 +25,11 @@ import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
+import joblib
 
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, status
-from xgboost import XGBClassifier
 
 import mlflow.artifacts
 import mlflow.tracking
@@ -63,7 +63,7 @@ class _ModelState:
 
     def __init__(self) -> None:
         self._poisson: PoissonPredictor | None = None
-        self._xgb: XGBClassifier | None = None
+        self._xgb: object | None = None
         self._ensemble_config: dict | None = None   # {w_poisson, w_xgb, ...}
         self._poisson_version: str = "unknown"
         self._ensemble_version: str = "unknown"
@@ -111,19 +111,30 @@ class _ModelState:
             )
             self._ensemble_config = json.loads(Path(cfg_path).read_text())
 
-            # XGBoost model artifact (registered alongside ensemble)
+            # Classifier artifact (registered alongside ensemble)
             xgb_mv = client.get_model_version_by_alias(
                 self._ensemble_config["xgb_model"], MODEL_ALIAS
             )
-            xgb_path = mlflow.artifacts.download_artifacts(
-                run_id=xgb_mv.run_id,
-                artifact_path="model/xgb_model.json",
-                tracking_uri=MLFLOW_URI,
-                dst_path=tmpdir,
-            )
-            xgb = XGBClassifier()
-            xgb.load_model(xgb_path)
-            self._xgb = xgb
+            try:
+                classifier_path = mlflow.artifacts.download_artifacts(
+                    run_id=xgb_mv.run_id,
+                    artifact_path="model/classifier.joblib",
+                    tracking_uri=MLFLOW_URI,
+                    dst_path=tmpdir,
+                )
+                self._xgb = joblib.load(classifier_path)
+            except mlflow.exceptions.MlflowException:
+                from xgboost import XGBClassifier
+
+                xgb_path = mlflow.artifacts.download_artifacts(
+                    run_id=xgb_mv.run_id,
+                    artifact_path="model/xgb_model.json",
+                    tracking_uri=MLFLOW_URI,
+                    dst_path=tmpdir,
+                )
+                xgb = XGBClassifier()
+                xgb.load_model(xgb_path)
+                self._xgb = xgb
 
         self._ensemble_version = mv.version
         w_p = self._ensemble_config["w_poisson"]

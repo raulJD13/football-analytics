@@ -21,7 +21,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from ml.scripts.train_classifier import FEATURES, MAX_REST_DAYS  # noqa: E402
+from ml.scripts.train_classifier import (  # noqa: E402
+    ELO_BASE_RATING,
+    FEATURES,
+    MAX_REST_DAYS,
+    compute_current_elo_ratings,
+)
 
 # Defaults when data is missing (mirrors dbt coalesce values)
 _DEFAULT_H2H_WIN_RATE = 0.45
@@ -39,6 +44,7 @@ def fetch_prediction_features(
     Features are assembled from current database state:
       - form: from each team's most recent match row in mart_match_features
       - attack/defence strengths: from mart_team_stats
+      - Elo: recomputed from historical finished matches
       - H2H: from historical mart_match_features for this (home, away) pair
       - rest days: days since each team's last match, capped at MAX_REST_DAYS
       - position_diff: from mart_standings
@@ -66,6 +72,21 @@ def fetch_prediction_features(
 
     home_attack   = _stat(home_team_id, "home_attack_strength",  _DEFAULT_ATTACK)
     away_defence  = _stat(away_team_id, "away_defence_weakness", _DEFAULT_DEFENCE)
+
+    elo_history = client.query_df("""
+        SELECT
+            match_date,
+            match_id,
+            home_team_id,
+            away_team_id,
+            result
+        FROM football.mart_match_features
+        WHERE result IN ('H', 'D', 'A')
+        ORDER BY match_date, match_id
+    """)
+    elo_ratings = compute_current_elo_ratings(elo_history)
+    home_elo = float(elo_ratings.get(home_team_id, ELO_BASE_RATING))
+    away_elo = float(elo_ratings.get(away_team_id, ELO_BASE_RATING))
 
     # ── 2. Current form (points from last 5 matches) ──────────────────────────
     # Use the form columns of the most recent row in mart_match_features for
@@ -152,6 +173,7 @@ def fetch_prediction_features(
         "away_form_5_ppg":       away_form_ppg,
         "home_attack_strength":  home_attack,
         "away_defence_weakness": away_defence,
+        "home_elo_diff":         home_elo - away_elo,
         "h2h_home_win_rate":     h2h_rate,
         "home_rest_days":        home_rest,
         "away_rest_days":        away_rest,

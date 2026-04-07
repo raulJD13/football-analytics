@@ -53,6 +53,7 @@ log = logging.getLogger(__name__)
 # ── constants ────────────────────────────────────────────────────────────────
 HOME_ADVANTAGE = 1.2          # historical home goal-scoring boost
 MAX_GOALS = 10                # upper bound for PMF grid
+RECENCY_HALF_LIFE_DAYS = 180  # recent matches influence strengths more strongly
 REGISTERED_MODEL = "poisson-match-predictor"
 EXPERIMENT_NAME = "football-match-prediction"
 
@@ -224,12 +225,16 @@ def build_team_params(matches: pd.DataFrame, league_avg: float) -> dict:
         }
     """
     # Unpivot: one row per (team, match) perspective
+    max_match_date = pd.Timestamp(matches["match_date"].max())
+    recency_days = (max_match_date - pd.to_datetime(matches["match_date"])).dt.days.astype(float)
+    recency_weight = np.power(0.5, recency_days / RECENCY_HALF_LIFE_DAYS)
+
     home_rows = matches[["home_team_id", "home_goals", "away_goals"]].rename(
         columns={"home_team_id": "team_id", "home_goals": "scored", "away_goals": "conceded"}
-    ).assign(is_home=True)
+    ).assign(is_home=True, recency_weight=recency_weight.values)
     away_rows = matches[["away_team_id", "away_goals", "home_goals"]].rename(
         columns={"away_team_id": "team_id", "away_goals": "scored", "home_goals": "conceded"}
-    ).assign(is_home=False)
+    ).assign(is_home=False, recency_weight=recency_weight.values)
     df = pd.concat([home_rows, away_rows], ignore_index=True)
     df["scored"] = pd.to_numeric(df["scored"], errors="coerce")
     df["conceded"] = pd.to_numeric(df["conceded"], errors="coerce")
@@ -239,21 +244,25 @@ def build_team_params(matches: pd.DataFrame, league_avg: float) -> dict:
         home = grp[grp["is_home"]]
         away = grp[~grp["is_home"]]
 
-        def _avg(series: pd.Series) -> float:
-            v = series.mean()
-            return float(v) if pd.notna(v) else league_avg
+        def _weighted_avg(frame: pd.DataFrame, column: str) -> float:
+            if frame.empty:
+                return league_avg
+            weights = frame["recency_weight"].to_numpy(dtype=float)
+            values = frame[column].to_numpy(dtype=float)
+            return float(np.average(values, weights=weights))
 
         strengths[str(int(team_id))] = {
-            "home_attack":  round(_avg(home["scored"])   / league_avg, 4),
-            "home_defence": round(_avg(home["conceded"]) / league_avg, 4),
-            "away_attack":  round(_avg(away["scored"])   / league_avg, 4),
-            "away_defence": round(_avg(away["conceded"]) / league_avg, 4),
+            "home_attack":  round(_weighted_avg(home, "scored")   / league_avg, 4),
+            "home_defence": round(_weighted_avg(home, "conceded") / league_avg, 4),
+            "away_attack":  round(_weighted_avg(away, "scored")   / league_avg, 4),
+            "away_defence": round(_weighted_avg(away, "conceded") / league_avg, 4),
         }
 
     return {
         "team_strengths": strengths,
         "league_avg_goals": round(league_avg, 4),
         "home_advantage": HOME_ADVANTAGE,
+        "recency_half_life_days": RECENCY_HALF_LIFE_DAYS,
     }
 
 
@@ -398,6 +407,7 @@ def train(
         mlflow.log_params({
             "home_advantage": HOME_ADVANTAGE,
             "max_goals_grid": MAX_GOALS,
+            "recency_half_life_days": RECENCY_HALF_LIFE_DAYS,
             "league_avg_goals": round(league_avg, 4),
             "n_teams": len(params["team_strengths"]),
             "competition": "LaLiga (PD)",
