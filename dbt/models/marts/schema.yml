@@ -8,6 +8,10 @@ models:
         description: "Competition code."
         tests:
           - not_null
+      - name: season_start_date
+        description: "Season identifier anchored to the season start date."
+        tests:
+          - not_null
       - name: team_id
         description: "Unique team identifier (PK)."
         tests:
@@ -42,6 +46,10 @@ models:
         description: "Competition code."
         tests:
           - not_null
+      - name: season_start_date
+        description: "Season identifier anchored to the season start date."
+        tests:
+          - not_null
       - name: team_id
         description: "Unique team identifier (PK)."
         tests:
@@ -74,6 +82,10 @@ models:
         tests:
           - not_null
           - unique
+      - name: season_start_date
+        description: "Season identifier anchored to the season start date."
+        tests:
+          - not_null
       - name: match_date
         description: "Date the match was played."
         tests:

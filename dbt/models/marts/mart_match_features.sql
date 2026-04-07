@@ -17,6 +17,7 @@ with matches as (
 
 standings as (
     select
+        league_code,
         season_start_date,
         snapshot_matchday,
         team_id,
@@ -29,7 +30,7 @@ team_stats as (
 ),
 
 form as (
-    select team_id, match_id, form_points_last_5, form_matches_available
+    select league_code, team_id, match_id, form_points_last_5, form_matches_available
     from {{ ref('int_form_last_5') }}
 ),
 
@@ -73,6 +74,7 @@ select
     -- same column (match_id, etc.) exists in other CTEs (form, rest_days).
     m.match_id                                                          as match_id,
     m.league_code                                                       as league_code,
+    m.season_start_date                                                 as season_start_date,
     m.match_date                                                        as match_date,
     m.matchday                                                          as matchday,
     m.home_team_id                                                      as home_team_id,
@@ -128,8 +130,12 @@ left join form           hf   on hf.league_code = m.league_code and hf.team_id  
 left join form           af   on af.league_code = m.league_code and af.team_id  = m.away_team_id and af.match_id = m.match_id
 left join advanced_form  haf  on haf.league_code = m.league_code and haf.team_id = m.home_team_id and haf.match_id = m.match_id
 left join advanced_form  aaf  on aaf.league_code = m.league_code and aaf.team_id = m.away_team_id and aaf.match_id = m.match_id
-left join team_stats     hts  on hts.league_code = m.league_code and hts.team_id = m.home_team_id
-left join team_stats     ats  on ats.league_code = m.league_code and ats.team_id = m.away_team_id
+left join team_stats     hts  on hts.league_code = m.league_code
+                              and hts.season_start_date = m.season_start_date
+                              and hts.team_id = m.home_team_id
+left join team_stats     ats  on ats.league_code = m.league_code
+                              and ats.season_start_date = m.season_start_date
+                              and ats.team_id = m.away_team_id
 left join standings      hs   on hs.league_code = m.league_code
                               and hs.season_start_date = m.season_start_date
                               and hs.snapshot_matchday = m.matchday

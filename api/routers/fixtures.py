@@ -42,7 +42,13 @@ def fixtures(
         try:
             xgb_features = None
             if state.is_ensemble:
-                xgb_features = fetch_prediction_features(client, row["home_team_id"], row["away_team_id"])
+                xgb_features = fetch_prediction_features(
+                    client,
+                    row["home_team_id"],
+                    row["away_team_id"],
+                    league_code=league,
+                    season=current_season,
+                )
             p_home, p_draw, p_away = state.predict(row["home_team_id"], row["away_team_id"], xgb_features)
             poisson_row = state.poisson_predictor.predict(None, __import__("pandas").DataFrame([{
                 "home_team_id": row["home_team_id"],

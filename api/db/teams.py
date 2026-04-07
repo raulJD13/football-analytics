@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import clickhouse_connect.driver
 
+from api.db.standings import current_season_start_year
+
 
 def fetch_team_stats(client: clickhouse_connect.driver.Client, team_id: int) -> dict | None:
     """Return combined home/away stats for a single team, or None if not found."""
+    season_start = f"{current_season_start_year()}-08-01"
     rows = client.query("""
         SELECT
             ts.team_id,
@@ -34,9 +37,15 @@ def fetch_team_stats(client: clickhouse_connect.driver.Client, team_id: int) -> 
             ts.home_attack_strength,
             ts.away_defence_weakness
         FROM football.mart_team_stats ts
-        LEFT JOIN football.mart_standings s ON ts.team_id = s.team_id
+        LEFT JOIN football.mart_standings s
+            ON ts.league_code = s.league_code
+           AND ts.season_start_date = s.season_start_date
+           AND ts.team_id = s.team_id
         WHERE ts.team_id = {team_id:UInt32}
-    """, parameters={"team_id": team_id}).result_rows
+          AND ts.league_code = 'PD'
+          AND ts.season_start_date >= toDate({season_start:String})
+          AND ts.season_start_date < addYears(toDate({season_start:String}), 1)
+    """, parameters={"team_id": team_id, "season_start": season_start}).result_rows
 
     if not rows:
         return None
@@ -57,9 +66,12 @@ def fetch_team_stats(client: clickhouse_connect.driver.Client, team_id: int) -> 
             varPopIf(toFloat64(away_goals), home_team_id = {team_id:UInt32} AND away_goals IS NOT NULL) AS home_def_var,
             varPopIf(toFloat64(home_goals), away_team_id = {team_id:UInt32} AND home_goals IS NOT NULL) AS away_def_var
         FROM football.mart_match_features
-        WHERE result IN ('H', 'D', 'A')
+        WHERE league_code = 'PD'
+          AND season_start_date >= toDate({season_start:String})
+          AND season_start_date < addYears(toDate({season_start:String}), 1)
+          AND result IN ('H', 'D', 'A')
           AND (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
-    """, parameters={"team_id": team_id}).result_rows[0]
+    """, parameters={"team_id": team_id, "season_start": season_start}).result_rows[0]
 
     home_cs, away_cs, home_def_var, away_def_var = cs_rows
 
@@ -103,6 +115,7 @@ def fetch_team_form(
     client: clickhouse_connect.driver.Client, team_id: int, n: int = 10
 ) -> list[dict]:
     """Return the last n finished matches for team_id, most recent first."""
+    season_start = f"{current_season_start_year()}-08-01"
     rows = client.query("""
         SELECT
             match_id,
@@ -113,11 +126,14 @@ def fetch_team_form(
             away_goals,
             result
         FROM football.mart_match_features
-        WHERE (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
+        WHERE league_code = 'PD'
+          AND season_start_date >= toDate({season_start:String})
+          AND season_start_date < addYears(toDate({season_start:String}), 1)
+          AND (home_team_id = {team_id:UInt32} OR away_team_id = {team_id:UInt32})
           AND result IN ('H', 'D', 'A')
         ORDER BY match_date DESC
         LIMIT {n:UInt32}
-    """, parameters={"team_id": team_id, "n": n}).result_rows
+    """, parameters={"team_id": team_id, "n": n, "season_start": season_start}).result_rows
 
     matches = []
     for match_id, match_date, home_id, away_id, hg, ag, result in rows:

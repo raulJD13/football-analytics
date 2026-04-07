@@ -27,6 +27,7 @@ from ml.scripts.train_classifier import (  # noqa: E402
     MAX_REST_DAYS,
     compute_current_elo_ratings,
 )
+from api.db.standings import current_season_start_year
 
 # Defaults when data is missing (mirrors dbt coalesce values)
 _DEFAULT_H2H_WIN_RATE = 0.45
@@ -38,6 +39,8 @@ def fetch_prediction_features(
     client: clickhouse_connect.driver.Client,
     home_team_id: int,
     away_team_id: int,
+    league_code: str = "PD",
+    season: int | None = None,
 ) -> pd.DataFrame:
     """Return a one-row DataFrame with all XGBoost features for a fixture.
 
@@ -53,16 +56,26 @@ def fetch_prediction_features(
     predictions never hard-fail.
     """
     today = datetime.date.today()
+    if season is None:
+        season = current_season_start_year(today)
+    season_start = f"{season}-08-01"
 
     # ── 1. Attack / defence strengths ────────────────────────────────────────
     stats = client.query_df("""
         SELECT
             team_id,
+            season_start_date,
             home_attack_strength,
             away_defence_weakness
         FROM football.mart_team_stats
-        WHERE team_id IN ({home}, {away})
-    """.format(home=home_team_id, away=away_team_id))
+        WHERE league_code = {league_code:String}
+          AND season_start_date >= toDate({season_start:String})
+          AND season_start_date < addYears(toDate({season_start:String}), 1)
+          AND team_id IN ({home}, {away})
+    """.format(home=home_team_id, away=away_team_id), parameters={
+        "league_code": league_code,
+        "season_start": season_start,
+    })
 
     def _stat(team_id: int, col: str, default: float) -> float:
         row = stats[stats["team_id"] == team_id]
@@ -81,9 +94,10 @@ def fetch_prediction_features(
             away_team_id,
             result
         FROM football.mart_match_features
-        WHERE result IN ('H', 'D', 'A')
+        WHERE league_code = {league_code:String}
+          AND result IN ('H', 'D', 'A')
         ORDER BY match_date, match_id
-    """)
+    """, parameters={"league_code": league_code})
     elo_ratings = compute_current_elo_ratings(elo_history)
     home_elo = float(elo_ratings.get(home_team_id, ELO_BASE_RATING))
     away_elo = float(elo_ratings.get(away_team_id, ELO_BASE_RATING))
@@ -103,10 +117,16 @@ def fetch_prediction_features(
                         away_team_id = {tid}, away_form_matches_available,
                         0)                              AS form_n
             FROM football.mart_match_features
-            WHERE home_team_id = {tid} OR away_team_id = {tid}
+            WHERE league_code = {league_code:String}
+              AND season_start_date >= toDate({season_start:String})
+              AND season_start_date < addYears(toDate({season_start:String}), 1)
+              AND (home_team_id = {tid} OR away_team_id = {tid})
             ORDER BY match_date DESC
             LIMIT 1
-        """.format(tid=team_id))
+        """.format(tid=team_id), parameters={
+            "league_code": league_code,
+            "season_start": season_start,
+        })
         if row_df.empty:
             return 0.0, 0.0
         return float(row_df.iloc[0]["form_pts"]), float(row_df.iloc[0]["form_n"])
@@ -143,10 +163,16 @@ def fetch_prediction_features(
                     0
                 ) AS possession_avg_last_5
             FROM football.mart_match_features
-            WHERE home_team_id = {tid} OR away_team_id = {tid}
+            WHERE league_code = {league_code:String}
+              AND season_start_date >= toDate({season_start:String})
+              AND season_start_date < addYears(toDate({season_start:String}), 1)
+              AND (home_team_id = {tid} OR away_team_id = {tid})
             ORDER BY match_date DESC
             LIMIT 1
-        """.format(tid=team_id))
+        """.format(tid=team_id), parameters={
+            "league_code": league_code,
+            "season_start": season_start,
+        })
         if row_df.empty:
             return 1.2, 4.0, 50.0
         row = row_df.iloc[0]
@@ -165,10 +191,16 @@ def fetch_prediction_features(
             countIf(result = 'H') / count()  AS h2h_home_win_rate,
             count()                           AS h2h_matches_played
         FROM football.mart_match_features
-        WHERE home_team_id = {home}
+        WHERE league_code = {league_code:String}
+          AND season_start_date >= toDate({season_start:String})
+          AND season_start_date < addYears(toDate({season_start:String}), 1)
+          AND home_team_id = {home}
           AND away_team_id = {away}
           AND result IN ('H', 'D', 'A')
-    """.format(home=home_team_id, away=away_team_id))
+    """.format(home=home_team_id, away=away_team_id), parameters={
+        "league_code": league_code,
+        "season_start": season_start,
+    })
 
     if h2h_df.empty or int(h2h_df.iloc[0]["h2h_matches_played"]) == 0:
         h2h_rate    = _DEFAULT_H2H_WIN_RATE
@@ -183,8 +215,14 @@ def fetch_prediction_features(
         row_df = client.query_df("""
             SELECT max(match_date) AS last_match
             FROM football.mart_match_features
-            WHERE home_team_id = {tid} OR away_team_id = {tid}
-        """.format(tid=team_id))
+            WHERE league_code = {league_code:String}
+              AND season_start_date >= toDate({season_start:String})
+              AND season_start_date < addYears(toDate({season_start:String}), 1)
+              AND (home_team_id = {tid} OR away_team_id = {tid})
+        """.format(tid=team_id), parameters={
+            "league_code": league_code,
+            "season_start": season_start,
+        })
         if row_df.empty or pd.isna(row_df.iloc[0]["last_match"]):
             return float(MAX_REST_DAYS)
         last = pd.Timestamp(row_df.iloc[0]["last_match"]).date()
@@ -198,8 +236,14 @@ def fetch_prediction_features(
     pos_df = client.query_df("""
         SELECT team_id, position
         FROM football.mart_standings
-        WHERE team_id IN ({home}, {away})
-    """.format(home=home_team_id, away=away_team_id))
+        WHERE league_code = {league_code:String}
+          AND season_start_date >= toDate({season_start:String})
+          AND season_start_date < addYears(toDate({season_start:String}), 1)
+          AND team_id IN ({home}, {away})
+    """.format(home=home_team_id, away=away_team_id), parameters={
+        "league_code": league_code,
+        "season_start": season_start,
+    })
 
     def _position(team_id: int) -> int:
         row = pos_df[pos_df["team_id"] == team_id]

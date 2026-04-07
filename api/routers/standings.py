@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Query, status
 
 from api.db.clickhouse import get_client
-from api.db.standings import fetch_form_strings, fetch_standings
+from api.db.standings import current_season_start_year, fetch_form_strings, fetch_standings
 from api.schemas.standings import StandingEntry, StandingsResponse
 
 log = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/standings", tags=["standings"])
 )
 def standings(
     league: str = Query("PD", description="Competition code, e.g. PD, PL, SA, BL1"),
-    season: int = Query(2024, description="Season start year"),
+    season: int = Query(current_season_start_year(), description="Season start year"),
 ) -> StandingsResponse:
     """Return the current league table ordered by position.
 
@@ -39,7 +39,7 @@ def standings(
     try:
         client = get_client()
         rows = fetch_standings(client, league_code=league, season=season)
-        form_map = fetch_form_strings(client, league_code=league, n=5)
+        form_map = fetch_form_strings(client, league_code=league, season=season, n=5)
     except Exception as exc:
         log.exception("Failed to fetch standings")
         raise HTTPException(

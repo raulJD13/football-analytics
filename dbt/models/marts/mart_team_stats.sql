@@ -11,13 +11,17 @@ with results as (
 ),
 
 league_avg as (
-    select toFloat64(avg(goals_scored)) as league_avg_goals
+    select
+        league_code,
+        season_start_date,
+        toFloat64(avg(goals_scored)) as league_avg_goals
     from results
-    group by league_code
+    group by league_code, season_start_date
 )
 
 select
     r.league_code,
+    r.season_start_date,
     r.team_id,
 
     -- Home
@@ -53,4 +57,5 @@ select
 from results r
 cross join league_avg la
 where r.league_code = la.league_code
-group by r.league_code, r.team_id
+  and r.season_start_date = la.season_start_date
+group by r.league_code, r.season_start_date, r.team_id

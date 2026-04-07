@@ -172,9 +172,15 @@ async function get<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export function currentSeasonStartYear(today = new Date()): number {
+  const month = today.getUTCMonth() + 1;
+  const year = today.getUTCFullYear();
+  return month >= 8 ? year : year - 1;
+}
+
 export function fetchStandings(
   league = "PD",
-  season = 2024,
+  season = currentSeasonStartYear(),
 ): Promise<StandingsResponse> {
   return get(`/api/standings?league=${league}&season=${season}`);
 }
