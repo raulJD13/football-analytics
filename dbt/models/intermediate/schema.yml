@@ -6,6 +6,10 @@ models:
       One row per team per finished match. Unpivots home/away into a single
       perspective per team, adding points (3/1/0), result (W/D/L), and is_home flag.
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: match_id
         description: "Match identifier."
         tests:
@@ -65,6 +69,10 @@ models:
       Rolling form over the 5 matches before each match per team.
       Intended for use as ML features — uses PRECEDING rows only to avoid leakage.
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: team_id
         description: "Team identifier."
         tests:
@@ -90,6 +98,9 @@ models:
     description: >
       Exact-fixture head-to-head metrics computed before each match starts.
     columns:
+      - name: league_code
+        tests:
+          - not_null
       - name: match_id
         tests:
           - not_null
@@ -107,6 +118,9 @@ models:
     description: >
       Rolling advanced stats from the 5 previous matches for each team.
     columns:
+      - name: league_code
+        tests:
+          - not_null
       - name: team_id
         tests:
           - not_null
@@ -121,6 +135,10 @@ models:
       Standings snapshot shifted by matchday. Rows with snapshot_matchday N
       represent league positions before matchday N starts.
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: season_start_date
         description: "Season identifier anchored to the season start date."
         tests:

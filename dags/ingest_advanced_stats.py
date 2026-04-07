@@ -20,12 +20,12 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from common.competitions import get_enabled_competitions
 from dags._datasets import RAW_ADVANCED_STATS_DATASET
 
 log = logging.getLogger(__name__)
 
 API_FOOTBALL_BASE = "https://v3.football.api-sports.io"
-LALIGA_LEAGUE_ID = 140
 MINIO_BUCKET = "raw"
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER", "admin")
@@ -114,6 +114,7 @@ def ingest_advanced_stats() -> None:
         matches_df = client.query_df("""
             SELECT
                 match_id,
+                league_code,
                 toDate(parseDateTimeBestEffort(utc_date)) AS match_date,
                 home_team_id,
                 away_team_id,
@@ -136,46 +137,51 @@ def ingest_advanced_stats() -> None:
                 [],
             ).append(row)
 
-        fixtures_resp = requests.get(
-            f"{API_FOOTBALL_BASE}/fixtures",
-            headers=headers,
-            params={"league": LALIGA_LEAGUE_ID, "season": season},
-            timeout=30,
-        )
-        fixtures_resp.raise_for_status()
-        fixtures = fixtures_resp.json().get("response", [])
-
         candidate_rows: list[dict] = []
-        for fixture in fixtures:
-            status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
-            if status not in {"FT", "AET", "PEN"}:
+        for competition in get_enabled_competitions():
+            if competition.api_football_league_id is None:
                 continue
-            fixture_date = str((fixture.get("fixture") or {}).get("date", ""))[:10]
-            home_name = ((fixture.get("teams") or {}).get("home") or {}).get("name", "")
-            away_name = ((fixture.get("teams") or {}).get("away") or {}).get("name", "")
-            match_row = next(
-                (
-                    row for row in matches_by_date.get(fixture_date, [])
-                    if _team_names_match(str(row["home_team_name"]), home_name)
-                    and _team_names_match(str(row["away_team_name"]), away_name)
-                ),
-                None,
+            fixtures_resp = requests.get(
+                f"{API_FOOTBALL_BASE}/fixtures",
+                headers=headers,
+                params={"league": competition.api_football_league_id, "season": season},
+                timeout=30,
             )
-            if match_row is None:
-                continue
-            match_id = int(match_row["match_id"])
-            if match_id in existing_ids:
-                continue
-            candidate_rows.append({
-                "match_id": match_id,
-                "api_football_fixture_id": int((fixture.get("fixture") or {}).get("id")),
-                "match_date": fixture_date,
-                "season_start_date": str(match_row["season_start_date"]),
-                "home_team_id": int(match_row["home_team_id"]),
-                "away_team_id": int(match_row["away_team_id"]),
-                "home_team_name": str(match_row["home_team_name"]),
-                "away_team_name": str(match_row["away_team_name"]),
-            })
+            fixtures_resp.raise_for_status()
+            fixtures = fixtures_resp.json().get("response", [])
+
+            for fixture in fixtures:
+                status = ((fixture.get("fixture") or {}).get("status") or {}).get("short")
+                if status not in {"FT", "AET", "PEN"}:
+                    continue
+                fixture_date = str((fixture.get("fixture") or {}).get("date", ""))[:10]
+                home_name = ((fixture.get("teams") or {}).get("home") or {}).get("name", "")
+                away_name = ((fixture.get("teams") or {}).get("away") or {}).get("name", "")
+                match_row = next(
+                    (
+                        row for row in matches_by_date.get(fixture_date, [])
+                        if str(row["league_code"]) == competition.code
+                        and _team_names_match(str(row["home_team_name"]), home_name)
+                        and _team_names_match(str(row["away_team_name"]), away_name)
+                    ),
+                    None,
+                )
+                if match_row is None:
+                    continue
+                match_id = int(match_row["match_id"])
+                if match_id in existing_ids:
+                    continue
+                candidate_rows.append({
+                    "match_id": match_id,
+                    "league_code": competition.code,
+                    "api_football_fixture_id": int((fixture.get("fixture") or {}).get("id")),
+                    "match_date": fixture_date,
+                    "season_start_date": str(match_row["season_start_date"]),
+                    "home_team_id": int(match_row["home_team_id"]),
+                    "away_team_id": int(match_row["away_team_id"]),
+                    "home_team_name": str(match_row["home_team_name"]),
+                    "away_team_name": str(match_row["away_team_name"]),
+                })
 
         selected = candidate_rows[:daily_limit]
         rows: list[dict] = []
@@ -259,7 +265,7 @@ def ingest_advanced_stats() -> None:
             database=CLICKHOUSE_DB,
         )
         column_names = [
-            "match_id", "api_football_fixture_id", "match_date", "season_start_date",
+            "match_id", "league_code", "api_football_fixture_id", "match_date", "season_start_date",
             "home_team_id", "away_team_id", "home_team_name", "away_team_name",
             "home_shots_on_target", "away_shots_on_target",
             "home_total_shots", "away_total_shots",

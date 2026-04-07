@@ -16,12 +16,12 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from common.competitions import get_enabled_competitions
 from dags._datasets import RAW_SCORERS_DATASET
 
 log = logging.getLogger(__name__)
 
 FOOTBALL_API_BASE = "https://api.football-data.org/v4"
-LALIGA_CODE = "PD"
 MINIO_BUCKET = "raw"
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER", "admin")
@@ -49,38 +49,44 @@ DEFAULT_ARGS = {
 def ingest_scorers() -> None:
 
     @task()
-    def fetch_scorers() -> dict:
+    def fetch_scorers() -> list[dict]:
         api_key = os.getenv("FOOTBALL_API_KEY") or Variable.get("FOOTBALL_API_KEY")
         headers = {"X-Auth-Token": api_key}
-        url = f"{FOOTBALL_API_BASE}/competitions/{LALIGA_CODE}/scorers"
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
-        log.info("Fetched %d scorers", len(payload.get("scorers", [])))
-        return payload
+        payloads: list[dict] = []
+        for competition in get_enabled_competitions():
+            url = f"{FOOTBALL_API_BASE}/competitions/{competition.code}/scorers"
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+            payload["league_code"] = competition.code
+            payloads.append(payload)
+            log.info("Fetched %d scorers for %s", len(payload.get("scorers", [])), competition.code)
+        return payloads
 
     @task()
-    def transform_scorers(payload: dict) -> list[dict]:
-        season = payload.get("season", {})
+    def transform_scorers(payloads: list[dict]) -> list[dict]:
         snapshot_date = datetime.utcnow().strftime("%Y-%m-%d")
         rows: list[dict] = []
-        for idx, entry in enumerate(payload.get("scorers", []), start=1):
-            player = entry.get("player", {})
-            team = entry.get("team") or {}
-            rows.append({
-                "snapshot_date": snapshot_date,
-                "season_start_date": season.get("startDate"),
-                "season_end_date": season.get("endDate"),
-                "rank": idx,
-                "player_id": player.get("id"),
-                "player_name": player.get("name"),
-                "team_id": team.get("id"),
-                "team_name": team.get("name"),
-                "played_matches": entry.get("playedMatches"),
-                "goals": entry.get("goals", 0),
-                "assists": entry.get("assists"),
-                "penalties": entry.get("penalties"),
-            })
+        for payload in payloads:
+            season = payload.get("season", {})
+            for idx, entry in enumerate(payload.get("scorers", []), start=1):
+                player = entry.get("player", {})
+                team = entry.get("team") or {}
+                rows.append({
+                    "league_code": payload.get("league_code", "PD"),
+                    "snapshot_date": snapshot_date,
+                    "season_start_date": season.get("startDate"),
+                    "season_end_date": season.get("endDate"),
+                    "rank": idx,
+                    "player_id": player.get("id"),
+                    "player_name": player.get("name"),
+                    "team_id": team.get("id"),
+                    "team_name": team.get("name"),
+                    "played_matches": entry.get("playedMatches"),
+                    "goals": entry.get("goals", 0),
+                    "assists": entry.get("assists"),
+                    "penalties": entry.get("penalties"),
+                })
         return rows
 
     @task()
@@ -115,7 +121,7 @@ def ingest_scorers() -> None:
             database=CLICKHOUSE_DB,
         )
         column_names = [
-            "snapshot_date", "season_start_date", "season_end_date", "rank",
+            "league_code", "snapshot_date", "season_start_date", "season_end_date", "rank",
             "player_id", "player_name", "team_id", "team_name",
             "played_matches", "goals", "assists", "penalties",
         ]

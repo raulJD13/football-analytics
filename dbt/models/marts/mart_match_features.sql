@@ -40,11 +40,12 @@ advanced_form as (
 -- Days of rest since each team's previous match
 rest as (
     select
+        league_code,
         team_id,
         match_id,
         match_date,
         lagInFrame(match_date) over (
-            partition by team_id
+            partition by league_code, team_id
             order by match_date, match_id
         )                                                           as prev_match_date
     from {{ ref('int_team_match_results') }}
@@ -52,6 +53,7 @@ rest as (
 
 rest_days as (
     select
+        league_code,
         team_id,
         match_id,
         if(
@@ -70,6 +72,7 @@ select
     -- Explicit aliases so ClickHouse stores unqualified names even when the
     -- same column (match_id, etc.) exists in other CTEs (form, rest_days).
     m.match_id                                                          as match_id,
+    m.league_code                                                       as league_code,
     m.match_date                                                        as match_date,
     m.matchday                                                          as matchday,
     m.home_team_id                                                      as home_team_id,
@@ -121,18 +124,20 @@ select
     )                                                              as position_diff
 
 from matches m
-left join form           hf   on hf.team_id  = m.home_team_id and hf.match_id = m.match_id
-left join form           af   on af.team_id  = m.away_team_id and af.match_id = m.match_id
-left join advanced_form  haf  on haf.team_id = m.home_team_id and haf.match_id = m.match_id
-left join advanced_form  aaf  on aaf.team_id = m.away_team_id and aaf.match_id = m.match_id
-left join team_stats     hts  on hts.team_id = m.home_team_id
-left join team_stats     ats  on ats.team_id = m.away_team_id
-left join standings      hs   on hs.season_start_date = m.season_start_date
+left join form           hf   on hf.league_code = m.league_code and hf.team_id  = m.home_team_id and hf.match_id = m.match_id
+left join form           af   on af.league_code = m.league_code and af.team_id  = m.away_team_id and af.match_id = m.match_id
+left join advanced_form  haf  on haf.league_code = m.league_code and haf.team_id = m.home_team_id and haf.match_id = m.match_id
+left join advanced_form  aaf  on aaf.league_code = m.league_code and aaf.team_id = m.away_team_id and aaf.match_id = m.match_id
+left join team_stats     hts  on hts.league_code = m.league_code and hts.team_id = m.home_team_id
+left join team_stats     ats  on ats.league_code = m.league_code and ats.team_id = m.away_team_id
+left join standings      hs   on hs.league_code = m.league_code
+                              and hs.season_start_date = m.season_start_date
                               and hs.snapshot_matchday = m.matchday
                               and hs.team_id = m.home_team_id
-left join standings      as_  on as_.season_start_date = m.season_start_date
+left join standings      as_  on as_.league_code = m.league_code
+                              and as_.season_start_date = m.season_start_date
                               and as_.snapshot_matchday = m.matchday
                               and as_.team_id = m.away_team_id
-left join h2h                 on h2h.match_id = m.match_id
-left join rest_days      hr   on hr.team_id  = m.home_team_id and hr.match_id = m.match_id
-left join rest_days      ar   on ar.team_id  = m.away_team_id and ar.match_id = m.match_id
+left join h2h                 on h2h.league_code = m.league_code and h2h.match_id = m.match_id
+left join rest_days      hr   on hr.league_code = m.league_code and hr.team_id  = m.home_team_id and hr.match_id = m.match_id
+left join rest_days      ar   on ar.league_code = m.league_code and ar.team_id  = m.away_team_id and ar.match_id = m.match_id

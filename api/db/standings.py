@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import clickhouse_connect.driver
 
+from common.competitions import SUPPORTED_COMPETITIONS
 
-_TOTAL_MATCHDAYS = 38  # LaLiga season length
-
-
-def fetch_standings(client: clickhouse_connect.driver.Client) -> list[dict]:
+def fetch_standings(
+    client: clickhouse_connect.driver.Client,
+    league_code: str = "PD",
+    season: int | None = None,
+) -> list[dict]:
     """Return mart_standings rows ordered by position, with projected_points added."""
+    if season is None:
+        season = 2024
+    total_matchdays = SUPPORTED_COMPETITIONS.get(league_code, SUPPORTED_COMPETITIONS["PD"]).total_matchdays
     rows = client.query("""
         SELECT
             position,
@@ -24,15 +29,16 @@ def fetch_standings(client: clickhouse_connect.driver.Client) -> list[dict]:
             goal_difference,
             points
         FROM football.mart_standings
+        WHERE league_code = {league_code:String}
         ORDER BY position
-    """).result_rows
+    """, parameters={"league_code": league_code}).result_rows
 
     results = []
     for row in rows:
         (position, team_id, team_name, played, won, draw, lost,
          gf, ga, gd, points) = row
         projected = (
-            round(points / played * _TOTAL_MATCHDAYS) if played > 0 else 0
+            round(points / played * total_matchdays) if played > 0 else 0
         )
         results.append({
             "position": position,
@@ -51,7 +57,11 @@ def fetch_standings(client: clickhouse_connect.driver.Client) -> list[dict]:
     return results
 
 
-def fetch_form_strings(client: clickhouse_connect.driver.Client, n: int = 5) -> dict[int, str]:
+def fetch_form_strings(
+    client: clickhouse_connect.driver.Client,
+    league_code: str = "PD",
+    n: int = 5,
+) -> dict[int, str]:
     """Return a dict mapping team_id → last-n form string (e.g. 'WWDLW').
 
     Fetches recent finished matches and computes form per team in Python.
@@ -61,10 +71,11 @@ def fetch_form_strings(client: clickhouse_connect.driver.Client, n: int = 5) -> 
     rows = client.query(f"""
         SELECT match_id, match_date, home_team_id, away_team_id, result
         FROM football.mart_match_features
-        WHERE result IN ('H', 'D', 'A')
+        WHERE league_code = {{league_code:String}}
+          AND result IN ('H', 'D', 'A')
         ORDER BY match_date DESC
         LIMIT {limit}
-    """).result_rows
+    """, parameters={"league_code": league_code}).result_rows
 
     # Build per-team ordered list (most recent first) of outcomes
     team_matches: dict[int, list[str]] = {}

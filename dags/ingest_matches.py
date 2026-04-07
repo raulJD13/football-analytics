@@ -16,12 +16,12 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from common.competitions import get_enabled_competitions
 from dags._datasets import RAW_MATCHES_DATASET
 
 log = logging.getLogger(__name__)
 
 FOOTBALL_API_BASE = "https://api.football-data.org/v4"
-LALIGA_CODE = "PD"
 MINIO_BUCKET = "raw"
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER", "admin")
@@ -50,16 +50,19 @@ def ingest_matches() -> None:
 
     @task()
     def fetch_matches() -> list[dict]:
-        """Fetch all LaLiga matches for the current season from football-data.org."""
+        """Fetch all enabled-league matches for the current season from football-data.org."""
         api_key = os.getenv("FOOTBALL_API_KEY") or Variable.get("FOOTBALL_API_KEY")
         headers = {"X-Auth-Token": api_key}
-
-        url = f"{FOOTBALL_API_BASE}/competitions/{LALIGA_CODE}/matches"
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-
-        matches = response.json().get("matches", [])
-        log.info("Fetched %d matches from football-data.org", len(matches))
+        matches: list[dict] = []
+        for competition in get_enabled_competitions():
+            url = f"{FOOTBALL_API_BASE}/competitions/{competition.code}/matches"
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            payload_matches = response.json().get("matches", [])
+            for match in payload_matches:
+                match["competition_code"] = competition.code
+            matches.extend(payload_matches)
+            log.info("Fetched %d matches for %s", len(payload_matches), competition.code)
         return matches
 
     @task()
@@ -70,6 +73,7 @@ def ingest_matches() -> None:
             rows.append(
                 {
                     "match_id": m["id"],
+                    "league_code": m.get("competition_code", "PD"),
                     "utc_date": m["utcDate"],
                     "status": m["status"],
                     "matchday": m.get("matchday"),
@@ -131,7 +135,7 @@ def ingest_matches() -> None:
             database=CLICKHOUSE_DB,
         )
         column_names = [
-            "match_id", "utc_date", "status", "matchday", "stage",
+            "match_id", "league_code", "utc_date", "status", "matchday", "stage",
             "home_team_id", "home_team_name", "away_team_id", "away_team_name",
             "home_score_full", "away_score_full", "home_score_half", "away_score_half",
             "winner", "season_start_date", "season_end_date",

@@ -11,6 +11,8 @@ sources:
         columns:
           - name: match_id
             description: "Unique match identifier from football-data.org."
+          - name: league_code
+            description: "Competition code, e.g. PD, PL, SA, BL1."
           - name: utc_date
             description: "Match kick-off datetime in UTC."
           - name: status
@@ -34,6 +36,7 @@ sources:
         identifier: raw_standings
         description: "Raw standings snapshot ingested by the ingest_standings DAG."
         columns:
+          - name: league_code
           - name: position
           - name: team_id
           - name: team_name
@@ -56,6 +59,7 @@ sources:
         description: "Advanced match stats matched to football-data match IDs."
         columns:
           - name: match_id
+          - name: league_code
           - name: api_football_fixture_id
           - name: match_date
           - name: season_start_date
@@ -74,6 +78,7 @@ sources:
         identifier: raw_scorers
         description: "Top scorers snapshot from football-data.org."
         columns:
+          - name: league_code
           - name: snapshot_date
           - name: season_start_date
           - name: season_end_date

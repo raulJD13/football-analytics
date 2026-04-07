@@ -4,11 +4,14 @@ models:
   - name: mart_standings
     description: "Current season standings computed from match results. One row per team."
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: team_id
         description: "Unique team identifier (PK)."
         tests:
           - not_null
-          - unique
       - name: position
         description: "Current league position (1 = top)."
         tests:
@@ -35,11 +38,14 @@ models:
       Aggregated team statistics split by home and away venue.
       Includes attack_strength and defence_weakness used by the Poisson model.
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: team_id
         description: "Unique team identifier (PK)."
         tests:
           - not_null
-          - unique
       - name: home_played
         description: "Matches played at home."
         tests:
@@ -59,6 +65,10 @@ models:
       Consumed directly by train_classifier.py and train_poisson.py.
       form_* columns use data from BEFORE each match (no leakage).
     columns:
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: match_id
         description: "Unique match identifier (PK)."
         tests:

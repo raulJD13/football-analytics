@@ -26,9 +26,13 @@ router = APIRouter(tags=["fixtures"])
 
 
 @router.get("/fixtures", response_model=FixturesResponse, summary="Get current fixtures and predictions")
-def fixtures(limit: int = Query(12, ge=1, le=30), season: int | None = Query(None)) -> FixturesResponse:
+def fixtures(
+    limit: int = Query(12, ge=1, le=30),
+    season: int | None = Query(None),
+    league: str = Query("PD"),
+) -> FixturesResponse:
     client = get_client()
-    rows = fetch_fixtures(client, season_start_year=season, limit=limit)
+    rows = fetch_fixtures(client, league_code=league, season_start_year=season, limit=limit)
     state = get_model()
     entries: list[FixtureEntry] = []
     current_season = season or (rows[0]["match_date"].year if rows else 2024)

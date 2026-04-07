@@ -16,12 +16,12 @@ import requests
 from airflow.decorators import dag, task
 from airflow.models import Variable
 
+from common.competitions import get_enabled_competitions
 from dags._datasets import RAW_STANDINGS_DATASET
 
 log = logging.getLogger(__name__)
 
 FOOTBALL_API_BASE = "https://api.football-data.org/v4"
-LALIGA_CODE = "PD"
 MINIO_BUCKET = "raw"
 MINIO_ENDPOINT = os.getenv("MINIO_ENDPOINT", "http://minio:9000")
 MINIO_ROOT_USER = os.getenv("MINIO_ROOT_USER", "admin")
@@ -50,58 +50,58 @@ def ingest_standings() -> None:
 
     @task()
     def fetch_standings() -> list[dict]:
-        """Fetch LaLiga standings table from football-data.org."""
+        """Fetch standings tables for all enabled competitions."""
         api_key = os.getenv("FOOTBALL_API_KEY") or Variable.get("FOOTBALL_API_KEY")
         headers = {"X-Auth-Token": api_key}
-
-        url = f"{FOOTBALL_API_BASE}/competitions/{LALIGA_CODE}/standings"
-        response = requests.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
-
-        # The API returns standings grouped by type (TOTAL, HOME, AWAY).
-        # We keep the TOTAL table.
-        standings_groups = payload.get("standings", [])
-        total_table = next(
-            (g["table"] for g in standings_groups if g["type"] == "TOTAL"), []
-        )
-        season = payload.get("season", {})
-        log.info("Fetched standings with %d teams", len(total_table))
-        return [{
-            "table": total_table,
-            "season_start_date": season.get("startDate"),
-            "season_end_date": season.get("endDate"),
-        }]
+        payloads: list[dict] = []
+        for competition in get_enabled_competitions():
+            url = f"{FOOTBALL_API_BASE}/competitions/{competition.code}/standings"
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            payload = response.json()
+            standings_groups = payload.get("standings", [])
+            total_table = next(
+                (g["table"] for g in standings_groups if g["type"] == "TOTAL"), []
+            )
+            season = payload.get("season", {})
+            payloads.append({
+                "league_code": competition.code,
+                "table": total_table,
+                "season_start_date": season.get("startDate"),
+                "season_end_date": season.get("endDate"),
+            })
+            log.info("Fetched standings with %d teams for %s", len(total_table), competition.code)
+        return payloads
 
     @task()
     def transform_standings(payloads: list[dict]) -> list[dict]:
         """Flatten the standings table into a flat row per team."""
-        payload = payloads[0]
-        table = payload["table"]
         snapshot_date = datetime.utcnow().strftime("%Y-%m-%d")
         rows = []
-        for entry in table:
-            team = entry.get("team", {})
-            rows.append(
-                {
-                    "position": entry["position"],
-                    "team_id": team["id"],
-                    "team_name": team["name"],
-                    "team_short_name": team.get("shortName"),
-                    "played_games": entry["playedGames"],
-                    "won": entry["won"],
-                    "draw": entry["draw"],
-                    "lost": entry["lost"],
-                    "points": entry["points"],
-                    "goals_for": entry["goalsFor"],
-                    "goals_against": entry["goalsAgainst"],
-                    "goal_difference": entry["goalDifference"],
-                    "form": entry.get("form"),
-                    "season_start_date": payload["season_start_date"],
-                    "season_end_date": payload["season_end_date"],
-                    "snapshot_date": snapshot_date,
-                }
-            )
+        for payload in payloads:
+            for entry in payload["table"]:
+                team = entry.get("team", {})
+                rows.append(
+                    {
+                        "league_code": payload["league_code"],
+                        "position": entry["position"],
+                        "team_id": team["id"],
+                        "team_name": team["name"],
+                        "team_short_name": team.get("shortName"),
+                        "played_games": entry["playedGames"],
+                        "won": entry["won"],
+                        "draw": entry["draw"],
+                        "lost": entry["lost"],
+                        "points": entry["points"],
+                        "goals_for": entry["goalsFor"],
+                        "goals_against": entry["goalsAgainst"],
+                        "goal_difference": entry["goalDifference"],
+                        "form": entry.get("form"),
+                        "season_start_date": payload["season_start_date"],
+                        "season_end_date": payload["season_end_date"],
+                        "snapshot_date": snapshot_date,
+                    }
+                )
         log.info("Transformed standings for %d teams", len(rows))
         return rows
 
@@ -147,7 +147,7 @@ def ingest_standings() -> None:
             database=CLICKHOUSE_DB,
         )
         column_names = [
-            "position", "team_id", "team_name", "team_short_name",
+            "league_code", "position", "team_id", "team_name", "team_short_name",
             "played_games", "won", "draw", "lost", "points",
             "goals_for", "goals_against", "goal_difference", "form",
             "season_start_date", "season_end_date", "snapshot_date",

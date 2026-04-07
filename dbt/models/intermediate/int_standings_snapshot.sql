@@ -6,6 +6,7 @@ with results as (
 
 teams_by_season as (
     select distinct
+        league_code,
         season_start_date,
         team_id
     from results
@@ -13,6 +14,7 @@ teams_by_season as (
 
 matchdays as (
     select distinct
+        league_code,
         season_start_date,
         matchday
     from results
@@ -21,6 +23,7 @@ matchdays as (
 initial_snapshot as (
     select
         t.season_start_date,
+        t.league_code,
         m.matchday                                               as snapshot_matchday,
         t.team_id,
         cast(null as Nullable(UInt8))                            as position,
@@ -31,13 +34,15 @@ initial_snapshot as (
         toInt16(0)                                               as goal_difference
     from teams_by_season t
     inner join matchdays m
-        on m.season_start_date = t.season_start_date
+        on m.league_code = t.league_code
+       and m.season_start_date = t.season_start_date
     where m.matchday = 1
 ),
 
 team_matchday_totals as (
     select
         season_start_date,
+        league_code,
         team_id,
         matchday,
         count()                                                  as played_games_in_matchday,
@@ -45,31 +50,32 @@ team_matchday_totals as (
         sum(goals_scored)                                        as goals_for_in_matchday,
         sum(goals_conceded)                                      as goals_against_in_matchday
     from results
-    group by season_start_date, team_id, matchday
+    group by league_code, season_start_date, team_id, matchday
 ),
 
 cumulative as (
     select
         season_start_date,
+        league_code,
         team_id,
         matchday,
         sum(played_games_in_matchday) over (
-            partition by season_start_date, team_id
+            partition by league_code, season_start_date, team_id
             order by matchday
             rows between unbounded preceding and current row
         )                                                        as played_games,
         sum(points_in_matchday) over (
-            partition by season_start_date, team_id
+            partition by league_code, season_start_date, team_id
             order by matchday
             rows between unbounded preceding and current row
         )                                                        as points,
         sum(goals_for_in_matchday) over (
-            partition by season_start_date, team_id
+            partition by league_code, season_start_date, team_id
             order by matchday
             rows between unbounded preceding and current row
         )                                                        as goals_for,
         sum(goals_against_in_matchday) over (
-            partition by season_start_date, team_id
+            partition by league_code, season_start_date, team_id
             order by matchday
             rows between unbounded preceding and current row
         )                                                        as goals_against
@@ -79,11 +85,12 @@ cumulative as (
 ranked as (
     select
         season_start_date,
+        league_code,
         matchday + 1                                             as snapshot_matchday,
         team_id,
         toUInt8(
             row_number() over (
-                partition by season_start_date, matchday
+                partition by league_code, season_start_date, matchday
                 order by
                     points desc,
                     (goals_for - goals_against) desc,

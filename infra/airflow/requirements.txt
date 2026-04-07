@@ -1,0 +1,14 @@
+pandas==2.3.3
+pyarrow==19.0.1
+boto3==1.38.8
+clickhouse-connect==0.15.1
+dbt-clickhouse==1.10.0
+mlflow==3.10.1
+scikit-learn==1.7.0
+xgboost==3.0.2
+scipy==1.17.1
+numpy==2.4.4
+optuna==4.8.0
+imbalanced-learn==0.14.1
+requests==2.32.3
+python-dotenv==1.2.2

@@ -4,6 +4,7 @@ with source as (
 )
 
 select
+    league_code,
     toDate(snapshot_date)      as snapshot_date,
     toDate(season_start_date)  as season_start_date,
     toDate(season_end_date)    as season_end_date,

@@ -7,6 +7,7 @@ with source as (
 renamed as (
     select
         match_id,
+        league_code,
         -- utc_date arrives as ISO 8601 e.g. "2025-08-16T19:30:00Z"; toDate()
         -- alone fails on the time component, so parse first then extract date.
         toDate(parseDateTimeBestEffort(utc_date))   as match_date,

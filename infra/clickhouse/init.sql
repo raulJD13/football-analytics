@@ -8,6 +8,7 @@ CREATE DATABASE IF NOT EXISTS football;
 CREATE TABLE IF NOT EXISTS football.raw_matches
 (
     match_id          UInt32,
+    league_code       String,
     utc_date          String,
     status            String,
     matchday          Nullable(UInt8),
@@ -25,12 +26,13 @@ CREATE TABLE IF NOT EXISTS football.raw_matches
     season_end_date   String
 )
 ENGINE = ReplacingMergeTree()
-ORDER BY (match_id)
+ORDER BY (league_code, match_id)
 SETTINGS index_granularity = 8192;
 
 -- raw_standings: daily snapshot of the league table (one row per team per load)
 CREATE TABLE IF NOT EXISTS football.raw_standings
 (
+    league_code       String,
     position         UInt8,
     team_id          UInt32,
     team_name        String,
@@ -49,13 +51,14 @@ CREATE TABLE IF NOT EXISTS football.raw_standings
     snapshot_date     Date
 )
 ENGINE = ReplacingMergeTree(snapshot_date)
-ORDER BY (season_start_date, team_id, snapshot_date)
+ORDER BY (league_code, season_start_date, team_id, snapshot_date)
 SETTINGS index_granularity = 8192;
 
 -- raw_advanced_stats: API-Football fixture statistics matched to football-data match IDs
 CREATE TABLE IF NOT EXISTS football.raw_advanced_stats
 (
     match_id               UInt32,
+    league_code            String,
     api_football_fixture_id UInt32,
     match_date             Date,
     season_start_date      Date,
@@ -74,12 +77,13 @@ CREATE TABLE IF NOT EXISTS football.raw_advanced_stats
     fetched_at             DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(fetched_at)
-ORDER BY (match_id)
+ORDER BY (league_code, match_id)
 SETTINGS index_granularity = 8192;
 
 -- raw_scorers: top scorers snapshot from football-data.org
 CREATE TABLE IF NOT EXISTS football.raw_scorers
 (
+    league_code       String,
     snapshot_date      Date,
     season_start_date  Date,
     season_end_date    Date,
@@ -94,5 +98,5 @@ CREATE TABLE IF NOT EXISTS football.raw_scorers
     penalties          Nullable(UInt16)
 )
 ENGINE = ReplacingMergeTree(snapshot_date)
-ORDER BY (season_start_date, rank, player_id)
+ORDER BY (league_code, season_start_date, rank, player_id)
 SETTINGS index_granularity = 8192;

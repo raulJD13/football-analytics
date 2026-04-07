@@ -5,6 +5,7 @@ with source as (
 
 select
     match_id,
+    league_code,
     api_football_fixture_id,
     toDate(match_date)                  as match_date,
     toDate(season_start_date)           as season_start_date,

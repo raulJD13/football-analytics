@@ -396,9 +396,6 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 | **API tier** | football-data.org free tier: 10 req/min and access to the 3 most recent seasons only |
 | **Static attack/defence strength** | `mart_team_stats` aggregates the whole season. Strength early in the season (small sample) carries the same weight as late in the season |
 | **Ensemble calibration** | With one season of data the Brier-based guard falls back to XGBoost-only because Poisson hurts calibration. With more seasons, a blend may outperform either model individually |
-| **Airflow slow start** | `_PIP_ADDITIONAL_REQUIREMENTS` reinstalls packages on every container start. Build a custom image for faster restarts |
-| **Single-league** | Only LaLiga (PD) ingested. Other competitions require additional DAGs |
-
 ---
 
 ## Next steps
@@ -430,7 +427,7 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 - [x] **Live score updates** — poll `/standings` and `/fixtures` endpoints on a timer during matchdays
 
 ### Infrastructure
-- [ ] **Custom Airflow image** — bake Python dependencies into the image instead of installing via `_PIP_ADDITIONAL_REQUIREMENTS`; cuts container startup from ~2 min to seconds
-- [ ] **Multi-league support** — parameterise DAGs and bootstrap script for PL, SA, BL1; each league needs its own dbt `source` and `mart_standings` partition
-- [ ] **Production MLflow backend** — replace SQLite + local artifact storage with PostgreSQL + S3/MinIO for multi-user or cloud deployment
-- [ ] **CI pipeline** — GitHub Actions: `dbt compile`, `dbt test` on every PR; `pytest` for API schemas
+- [x] **Custom Airflow image** — bake Python dependencies into the image instead of installing via `_PIP_ADDITIONAL_REQUIREMENTS`; cuts container startup from ~2 min to seconds
+- [x] **Multi-league support** — parameterise DAGs and bootstrap script for PL, SA, BL1; each league needs its own dbt `source` and `mart_standings` partition
+- [x] **Production MLflow backend** — replace SQLite + local artifact storage with PostgreSQL + S3/MinIO for multi-user or cloud deployment
+- [x] **CI pipeline** — GitHub Actions: `dbt compile`, `dbt test` on every PR; `pytest` for API schemas

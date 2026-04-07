@@ -7,6 +7,7 @@ with matches as (
 home_results as (
     select
         match_id,
+        league_code,
         match_date,
         matchday,
         season_start_date,
@@ -31,6 +32,7 @@ home_results as (
 away_results as (
     select
         match_id,
+        league_code,
         match_date,
         matchday,
         season_start_date,

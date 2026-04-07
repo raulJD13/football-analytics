@@ -6,6 +6,7 @@ with advanced as (
 team_rows as (
     select
         match_id,
+        league_code,
         match_date,
         season_start_date,
         home_team_id                             as team_id,
@@ -21,6 +22,7 @@ team_rows as (
 
     select
         match_id,
+        league_code,
         match_date,
         season_start_date,
         away_team_id                             as team_id,
@@ -34,30 +36,31 @@ team_rows as (
 )
 
 select
+    league_code,
     team_id,
     match_id,
     avg(expected_goals_for) over (
-        partition by team_id
+        partition by league_code, team_id
         order by match_date, match_id
         rows between 5 preceding and 1 preceding
     ) as xg_for_avg_last_5,
     avg(expected_goals_against) over (
-        partition by team_id
+        partition by league_code, team_id
         order by match_date, match_id
         rows between 5 preceding and 1 preceding
     ) as xg_against_avg_last_5,
     avg(shots_on_target_for) over (
-        partition by team_id
+        partition by league_code, team_id
         order by match_date, match_id
         rows between 5 preceding and 1 preceding
     ) as shots_on_target_for_avg_last_5,
     avg(shots_on_target_against) over (
-        partition by team_id
+        partition by league_code, team_id
         order by match_date, match_id
         rows between 5 preceding and 1 preceding
     ) as shots_on_target_against_avg_last_5,
     avg(possession_pct) over (
-        partition by team_id
+        partition by league_code, team_id
         order by match_date, match_id
         rows between 5 preceding and 1 preceding
     ) as possession_avg_last_5

@@ -4,6 +4,7 @@ with source as (
 )
 
 select
+    league_code,
     position,
     team_id,
     team_name,

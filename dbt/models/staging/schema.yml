@@ -2,13 +2,17 @@ version: 2
 
 models:
   - name: stg_matches
-    description: "Finished LaLiga matches with casted types. One row per match."
+    description: "Finished matches with casted types. One row per match."
     columns:
       - name: match_id
         description: "Unique match identifier (PK)."
         tests:
           - not_null
           - unique
+      - name: league_code
+        description: "Competition code."
+        tests:
+          - not_null
       - name: match_date
         description: "Match date (UTC) cast to Date."
         tests:
@@ -54,13 +58,16 @@ models:
               values: ["HOME_TEAM", "AWAY_TEAM", "DRAW"]
 
   - name: stg_teams
-    description: "Unique teams derived from match participants. One row per team."
+    description: "Unique teams derived from match participants. One row per team and competition."
     columns:
-      - name: team_id
-        description: "Unique team identifier (PK)."
+      - name: league_code
+        description: "Competition code."
         tests:
           - not_null
-          - unique
+      - name: team_id
+        description: "Unique team identifier within a competition."
+        tests:
+          - not_null
       - name: team_name
         description: "Full team name."
         tests:
@@ -69,6 +76,9 @@ models:
   - name: stg_standings
     description: "Versioned standings snapshots with season metadata."
     columns:
+      - name: league_code
+        tests:
+          - not_null
       - name: team_id
         tests:
           - not_null
@@ -82,6 +92,9 @@ models:
   - name: stg_advanced_stats
     description: "Advanced match stats matched to football-data match IDs."
     columns:
+      - name: league_code
+        tests:
+          - not_null
       - name: match_id
         tests:
           - not_null
@@ -94,6 +107,9 @@ models:
   - name: stg_scorers
     description: "Top scorers snapshots from football-data.org."
     columns:
+      - name: league_code
+        tests:
+          - not_null
       - name: snapshot_date
         tests:
           - not_null

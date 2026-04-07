@@ -1,10 +1,9 @@
 """Router: GET /standings
 
-Returns the current LaLiga table from mart_standings, enriched with
+Returns the current league table from mart_standings, enriched with
 form strings (last 5 results) and projected final-day points.
 
-The `league` and `season` query params are accepted for API consistency
-but only LaLiga (PD) season 2024 data is currently ingested.
+The `league` query param defaults to `PD`.
 """
 
 from __future__ import annotations
@@ -25,10 +24,10 @@ router = APIRouter(prefix="/standings", tags=["standings"])
 @router.get(
     "",
     response_model=StandingsResponse,
-    summary="Get current LaLiga standings",
+    summary="Get current league standings",
 )
 def standings(
-    league: str = Query("PD", description="Competition code (only PD supported)"),
+    league: str = Query("PD", description="Competition code, e.g. PD, PL, SA, BL1"),
     season: int = Query(2024, description="Season start year"),
 ) -> StandingsResponse:
     """Return the current league table ordered by position.
@@ -39,8 +38,8 @@ def standings(
     """
     try:
         client = get_client()
-        rows = fetch_standings(client)
-        form_map = fetch_form_strings(client, n=5)
+        rows = fetch_standings(client, league_code=league, season=season)
+        form_map = fetch_form_strings(client, league_code=league, n=5)
     except Exception as exc:
         log.exception("Failed to fetch standings")
         raise HTTPException(

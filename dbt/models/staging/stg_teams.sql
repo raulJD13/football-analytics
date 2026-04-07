@@ -2,6 +2,7 @@
 -- Both home and away appearances are considered to ensure completeness.
 with home_teams as (
     select
+        league_code,
         home_team_id    as team_id,
         home_team_name  as team_name
     from {{ ref('stg_matches') }}
@@ -9,6 +10,7 @@ with home_teams as (
 
 away_teams as (
     select
+        league_code,
         away_team_id    as team_id,
         away_team_name  as team_name
     from {{ ref('stg_matches') }}
@@ -21,6 +23,7 @@ all_teams as (
 )
 
 select distinct
+    league_code,
     team_id,
     team_name
 from all_teams

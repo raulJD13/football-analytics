@@ -9,6 +9,7 @@ import clickhouse_connect.driver
 
 def fetch_fixtures(
     client: clickhouse_connect.driver.Client,
+    league_code: str = "PD",
     season_start_year: int | None = None,
     limit: int = 12,
 ) -> list[dict]:
@@ -30,12 +31,14 @@ def fetch_fixtures(
             home_score_full,
             away_score_full
         FROM football.raw_matches
-        WHERE toDate(season_start_date) >= toDate({season_start:String})
+        WHERE league_code = {league_code:String}
+          AND toDate(season_start_date) >= toDate({season_start:String})
           AND toDate(season_start_date) < addYears(toDate({season_start:String}), 1)
         ORDER BY abs(dateDiff('day', toDate(parseDateTimeBestEffort(utc_date)), today())), utc_date
         LIMIT {limit:UInt32}
     """, parameters={
         "season_start": f"{season_start_year}-08-01",
+        "league_code": league_code,
         "limit": limit,
     }).result_rows
 

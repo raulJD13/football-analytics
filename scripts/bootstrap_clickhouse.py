@@ -22,11 +22,12 @@ import time
 import clickhouse_connect
 import requests
 
+from common.competitions import DEFAULT_COMPETITION_CODES
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
 FOOTBALL_API_BASE = "https://api.football-data.org/v4"
-LALIGA_CODE = "PD"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -45,14 +46,14 @@ def _api_get(path: str, api_key: str) -> dict:
 
 # ── data fetchers / transformers ──────────────────────────────────────────────
 
-def fetch_matches(api_key: str, season: int | None = None) -> list[list]:
+def fetch_matches(api_key: str, league_code: str, season: int | None = None) -> list[list]:
     """Return rows for raw_matches.
 
     Args:
         season: Start year of the season (e.g. 2023 for 2023/24).
                 None → current season (API default).
     """
-    path = f"/competitions/{LALIGA_CODE}/matches"
+    path = f"/competitions/{league_code}/matches"
     if season is not None:
         path += f"?season={season}"
     data = _api_get(path, api_key)
@@ -61,6 +62,7 @@ def fetch_matches(api_key: str, season: int | None = None) -> list[list]:
     for m in matches:
         rows.append([
             m["id"],
+            league_code,
             m["utcDate"],
             m["status"],
             m.get("matchday"),
@@ -82,20 +84,20 @@ def fetch_matches(api_key: str, season: int | None = None) -> list[list]:
 
 
 MATCHES_COLUMNS = [
-    "match_id", "utc_date", "status", "matchday", "stage",
+    "match_id", "league_code", "utc_date", "status", "matchday", "stage",
     "home_team_id", "home_team_name", "away_team_id", "away_team_name",
     "home_score_full", "away_score_full", "home_score_half", "away_score_half",
     "winner", "season_start_date", "season_end_date",
 ]
 
 
-def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
+def fetch_standings(api_key: str, league_code: str, season: int | None = None) -> list[list]:
     """Return rows for raw_standings (TOTAL table only).
 
     Args:
         season: Start year of the season. None → current season.
     """
-    path = f"/competitions/{LALIGA_CODE}/standings"
+    path = f"/competitions/{league_code}/standings"
     if season is not None:
         path += f"?season={season}"
     data = _api_get(path, api_key)
@@ -109,6 +111,7 @@ def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
     for entry in table:
         team = entry.get("team", {})
         rows.append([
+            league_code,
             entry["position"],
             team["id"],
             team["name"],
@@ -131,7 +134,7 @@ def fetch_standings(api_key: str, season: int | None = None) -> list[list]:
 
 
 STANDINGS_COLUMNS = [
-    "position", "team_id", "team_name", "team_short_name",
+    "league_code", "position", "team_id", "team_name", "team_short_name",
     "played_games", "won", "draw", "lost", "points",
     "goals_for", "goals_against", "goal_difference", "form",
     "season_start_date", "season_end_date", "snapshot_date",
@@ -152,6 +155,13 @@ def main() -> None:
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=int(os.getenv("CLICKHOUSE_PORT", "8124")))
     parser.add_argument("--db", default=os.getenv("CLICKHOUSE_DB", "football"))
+    parser.add_argument(
+        "--league-codes",
+        nargs="+",
+        default=list(DEFAULT_COMPETITION_CODES),
+        metavar="CODE",
+        help="Competition codes to ingest (default: PD PL SA BL1).",
+    )
     parser.add_argument(
         "--seasons",
         nargs="+",
@@ -184,30 +194,50 @@ def main() -> None:
     total_matches = 0
     total_standings = 0
 
-    for i, season in enumerate(seasons):
-        season_label = str(season) if season else "current"
-        log.info("─── Season %s (%d/%d) ───", season_label, i + 1, len(seasons))
+    league_codes = [code.upper() for code in args.league_codes]
+    for league_index, league_code in enumerate(league_codes):
+        for season_index, season in enumerate(seasons):
+            season_label = str(season) if season else "current"
+            log.info(
+                "─── League %s season %s (%d/%d leagues, %d/%d seasons) ───",
+                league_code,
+                season_label,
+                league_index + 1,
+                len(league_codes),
+                season_index + 1,
+                len(seasons),
+            )
 
-        # ── matches ───────────────────────────────────────────────────────────
-        match_rows = fetch_matches(api_key, season)
-        client.insert("raw_matches", match_rows, column_names=MATCHES_COLUMNS)
-        log.info("  Inserted %d rows into raw_matches (season %s)", len(match_rows), season_label)
-        total_matches += len(match_rows)
+            match_rows = fetch_matches(api_key, league_code, season)
+            client.insert("raw_matches", match_rows, column_names=MATCHES_COLUMNS)
+            log.info(
+                "  Inserted %d rows into raw_matches (league %s, season %s)",
+                len(match_rows),
+                league_code,
+                season_label,
+            )
+            total_matches += len(match_rows)
 
-        # Rate limit: 10 req/min on free tier
-        log.info("  Sleeping 7 s (rate limit) …")
-        time.sleep(7)
-
-        # ── standings (final snapshot for this season) ────────────────────────
-        standing_rows = fetch_standings(api_key, season)
-        client.insert("raw_standings", standing_rows, column_names=STANDINGS_COLUMNS)
-        log.info("  Inserted %d rows into raw_standings (season %s)", len(standing_rows), season_label)
-        total_standings += len(standing_rows)
-
-        # Sleep between seasons (except after the last one)
-        if i < len(seasons) - 1:
-            log.info("  Sleeping 7 s before next season …")
+            log.info("  Sleeping 7 s (rate limit) …")
             time.sleep(7)
+
+            standing_rows = fetch_standings(api_key, league_code, season)
+            client.insert("raw_standings", standing_rows, column_names=STANDINGS_COLUMNS)
+            log.info(
+                "  Inserted %d rows into raw_standings (league %s, season %s)",
+                len(standing_rows),
+                league_code,
+                season_label,
+            )
+            total_standings += len(standing_rows)
+
+            is_last_iteration = (
+                league_index == len(league_codes) - 1
+                and season_index == len(seasons) - 1
+            )
+            if not is_last_iteration:
+                log.info("  Sleeping 7 s before next request group …")
+                time.sleep(7)
 
     # ── deduplicate (ReplacingMergeTree merges on OPTIMIZE) ──────────────────
     log.info("Running OPTIMIZE TABLE to apply ReplacingMergeTree deduplication …")
