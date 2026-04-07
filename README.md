@@ -1,24 +1,24 @@
 # Football Analytics
 
-Data engineering and ML platform for LaLiga match prediction. Three seasons of historical data flow from football-data.org through a dbt pipeline into ClickHouse, powering a Poisson + XGBoost ensemble served via FastAPI and a React dashboard.
+Data engineering and ML platform for football match prediction. Historical data flows from football-data.org and API-Football through Airflow + dbt into ClickHouse, powering Poisson and XGBoost models served via FastAPI and a Next.js dashboard.
 
-> **Status:** All six phases complete. Single-command deployment via Docker Compose. Out-of-sample XGBoost accuracy: **64.3%** vs 48.8% home-win baseline.
+> **Status:** All six phases complete. Single-command deployment via Docker Compose. Current cleaned out-of-sample XGBoost accuracy: **55.9%** vs **49.0%** home-win baseline.
 
 ---
 
 ## Architecture
 
 ```
-football-data.org API  (3 seasons: 2023/24 · 2024/25 · 2025/26)
-  └─► Airflow DAG (daily 02:00 UTC)
+football-data.org + API-Football  (current multi-season window)
+  └─► Airflow DAGs
         ├─► MinIO  raw/   (Parquet archive, partitioned by date)
         └─► ClickHouse  football.raw_*
               └─► dbt  staging → intermediate → marts
                     └─► ClickHouse  football.mart_*  (OLAP)
                           └─► FastAPI  (port 8001)
                                 ├─► POST /predict  ──► MLflow ensemble registry
-                                ├─► GET  /standings
-                                └─► GET  /teams/{id}/stats · /form
+                                ├─► GET  /fixtures · /standings · /model/metrics
+                                └─► GET  /teams/{id}/stats · /form · /xg
                                           └─► Next.js dashboard  (port 3001)
 ```
 
@@ -28,9 +28,10 @@ football-data.org API  (3 seasons: 2023/24 · 2024/25 · 2025/26)
 
 | Service | Image | Host port | Purpose |
 |---|---|---|---|
-| `airflow-webserver` | apache/airflow:2.9.0 | **8080** | DAG UI |
-| `airflow-scheduler` | apache/airflow:2.9.0 | — | Runs DAGs on schedule |
+| `airflow-webserver` | _(custom Airflow image)_ | **8080** | DAG UI |
+| `airflow-scheduler` | _(custom Airflow image)_ | — | Runs DAGs on schedule |
 | `postgres` | postgres:15 | — | Airflow metadata DB |
+| `mlflow-postgres` | postgres:15 | — | MLflow backend store |
 | `minio` | minio/minio | **9000** (S3), **9001** (UI) | Raw Parquet archive |
 | `clickhouse` | clickhouse-server:24.3 | **8124** (HTTP) | OLAP database |
 | `mlflow` | ghcr.io/mlflow/mlflow:v2.11.0 | **5001** | Experiment tracking + model registry |
@@ -58,7 +59,7 @@ Docker Compose runs the services in dependency order:
 4. `api` starts and loads the ensemble from MLflow
 5. `frontend` builds and starts Next.js
 
-Open **http://localhost:3001** once all services are healthy (~3–5 min on first run).
+Open **http://localhost:3001** once all services are healthy (~3–5 min on first run, faster after image build cache warms).
 
 ---
 
@@ -101,33 +102,42 @@ cd frontend && npm install && npm run dev    # http://localhost:3001
 ```
 football-analytics/
 ├── dags/                              # Airflow DAGs
-│   ├── ingest_matches.py              # LaLiga matches → MinIO + ClickHouse
-│   └── ingest_standings.py            # LaLiga standings → MinIO + ClickHouse
+│   ├── ingest_matches.py              # League fixtures/results → MinIO + ClickHouse
+│   ├── ingest_standings.py            # Standings snapshots → MinIO + ClickHouse
+│   ├── ingest_advanced_stats.py       # API-Football xG / possession / shots
+│   ├── ingest_scorers.py              # Top scorers snapshots
+│   ├── run_dbt_transformations.py     # dbt run/test after ingestions
+│   └── retrain_model.py               # Weekly retraining DAG
 │
 ├── dbt/                               # dbt project
 │   ├── profiles.yml                   # Reads CLICKHOUSE_HOST/PORT/DB from env
 │   └── models/
 │       ├── staging/                   # Cast + rename only (views)
 │       │   ├── stg_matches.sql        # Finished matches, ISO dates parsed
+│       │   ├── stg_advanced_stats.sql # Match-level xG / possession / shots
 │       │   └── stg_teams.sql          # Unique teams from match participants
 │       ├── intermediate/              # Business logic (views)
 │       │   ├── int_team_match_results.sql   # 1 row per team per match (W/D/L, pts)
-│       │   └── int_form_last_5.sql          # Rolling form, no data leakage
+│       │   ├── int_standings_snapshot.sql   # Matchday-accurate standings snapshots
+│       │   └── int_h2h.sql                  # Head-to-head aggregates
 │       └── marts/                     # Final tables (MergeTree)
-│           ├── mart_standings.sql           # Current season table
-│           ├── mart_team_stats.sql          # Home/away stats + strength ratios
+│           ├── mart_standings.sql           # League + season-aware standings
+│           ├── mart_team_stats.sql          # Season-aware team strengths
 │           └── mart_match_features.sql      # ML feature table (all features pre-joined)
 │
 ├── ml/
 │   └── scripts/
-│       ├── train_poisson.py           # Poisson model: team strengths → P(H/D/A)
-│       ├── train_classifier.py        # XGBoost: TimeSeriesSplit CV, 10 features
+│       ├── train_poisson.py           # Season-weighted Poisson baseline
+│       ├── train_classifier.py        # XGBoost: Elo + xG + calibration + SMOTE
+│       ├── benchmark_classifiers.py   # XGBoost vs CatBoost vs FT-Transformer benchmark
 │       └── ensemble.py                # Weight grid search; registers best combo
 │
 ├── api/
 │   ├── main.py                        # FastAPI app, CORS, lifespan
 │   ├── routers/
 │   │   ├── predict.py                 # POST /predict  (ensemble or Poisson fallback)
+│   │   ├── fixtures.py                # GET  /fixtures · /fixtures/{id}
+│   │   ├── model.py                   # GET  /model/metrics
 │   │   ├── standings.py               # GET  /standings
 │   │   └── teams.py                   # GET  /teams/{id}/stats · /form
 │   ├── schemas/                       # Pydantic request/response models
@@ -139,11 +149,12 @@ football-analytics/
 │
 ├── frontend/                          # Next.js 16 + TypeScript + Tailwind v4
 │   ├── app/
-│   │   ├── overview/                  # KPIs + top predictions + standings snapshot
-│   │   ├── fixtures/                  # Simulated fixture prediction grid
-│   │   ├── predictions/               # Team selector + POST /predict + animated bars
+│   │   ├── overview/                  # KPIs + live model metrics + standings snapshot
+│   │   ├── fixtures/                  # Live matchday prediction grid
+│   │   ├── matches/[id]/              # Match detail, H2H, form, explanation
+│   │   ├── predictions/               # Team selector + POST /predict + explanation
 │   │   ├── standings/                 # Full table with form dots + projected points
-│   │   ├── teams/[id]/                # Home/away stat cards + last 10 matches
+│   │   ├── teams/[id]/                # Home/away cards + xG accumulated chart
 │   │   └── model/                     # Accuracy/Brier/log-loss KPIs + feature chart
 │   └── Dockerfile                     # Multi-stage build: deps → build → runner
 │
@@ -174,13 +185,13 @@ football-analytics/
 
 ### Seasons available
 
-football-data.org free tier gives access to the **3 most recent seasons** of LaLiga (PD):
+football-data.org free tier gives access to the recent seasons used here, and the project now supports multiple leagues (`PD`, `PL`, `SA`, `BL1`) plus API-Football advanced stats:
 
 | `--seasons` arg | Season | Matches |
 |---|---|---|
 | `2023` | 2023/24 | 380 |
 | `2024` | 2024/25 | 380 |
-| `2025` | 2025/26 (current) | 380 (293 finished as of April 2026) |
+| `2025` | 2025/26 (current) | 380 (season in progress / mixed statuses depending on snapshot date) |
 
 ```bash
 # Add a new season (e.g. after the window opens each August):
@@ -196,15 +207,17 @@ python scripts/bootstrap_clickhouse.py --seasons 2025
 | staging | `stg_teams` | view | Unique teams from match participants |
 | intermediate | `int_team_match_results` | view | Unpivots matches → 1 row/team/match |
 | intermediate | `int_form_last_5` | view | Rolling 5-match form (window excludes current match) |
-| mart | `mart_standings` | MergeTree | Current standings computed from results |
-| mart | `mart_team_stats` | MergeTree | Home/away averages + attack/defence strength ratios |
-| mart | `mart_match_features` | MergeTree | One row/match: all ML features pre-joined, no leakage in form |
+| intermediate | `int_standings_snapshot` | view | Matchday-accurate standings snapshots |
+| intermediate | `int_h2h` | view | Materialised head-to-head history |
+| mart | `mart_standings` | MergeTree | League + season-aware standings computed from results |
+| mart | `mart_team_stats` | MergeTree | Season-aware home/away averages + strength ratios |
+| mart | `mart_match_features` | MergeTree | One row/match: all ML features pre-joined, no leakage in form or standings |
 
 ---
 
 ## ML models
 
-All models follow a **temporal train/holdout split**: train on the two oldest seasons, evaluate on the most recent season (never seen during fitting).
+All models follow a **temporal evaluation setup**. After fixing season contamination and standings leakage, the current reported numbers come from cleaned temporal folds over the available seasons.
 
 ### Poisson model (`train_poisson.py`)
 
@@ -216,39 +229,45 @@ All models follow a **temporal train/holdout split**: train on the two oldest se
 P(H/D/A) computed by summing the joint PMF over an 11×11 goal grid.  
 Registered in MLflow as `poisson-match-predictor` · alias `Production`.
 
-| Metric | Value (OOS 2025/26) |
+| Metric | Value (current holdout) |
 |---|---|
-| Accuracy | 49.1% |
-| Baseline (home win) | 48.8% |
+| Accuracy | 48.8% |
+| Baseline (home win) | 49.0% |
 | Brier score | 0.602 |
 
 ### XGBoost classifier (`train_classifier.py`)
 
-Multi-class classifier with `TimeSeriesSplit(n_splits=3)` — no random shuffling, no future leakage.
+Multi-class classifier with `TimeSeriesSplit(n_splits=3)` — no random shuffling, no future leakage. The pipeline includes Elo, API-Football advanced stats, Optuna tuning, draw-focused SMOTE, and Platt scaling calibration.
 
-**Features** (10 total):
+**Features** (16 total):
 
 | Feature | Description |
 |---|---|
 | `home_form_5_ppg` | Home team points-per-game in last 5 matches |
 | `away_form_5_ppg` | Away team points-per-game in last 5 matches |
+| `home_xg_for_avg_last_5` | Home team average xG in last 5 matches |
+| `away_xg_for_avg_last_5` | Away team average xG in last 5 matches |
+| `xg_diff` | Home xG rolling average minus away xG rolling average |
+| `shots_on_target_diff` | Rolling shots-on-target differential |
+| `possession_diff` | Rolling possession differential |
 | `home_attack_strength` | Home avg goals scored / league avg |
 | `away_defence_weakness` | Away avg goals conceded / league avg |
+| `home_elo_diff` | Pre-match home Elo minus away Elo |
 | `h2h_home_win_rate` | Historical H2H win rate for home team |
 | `h2h_matches_played` | H2H sample size (reliability proxy) |
 | `home_rest_days` | Days since home team's last match (capped at 14) |
 | `away_rest_days` | Days since away team's last match (capped at 14) |
 | `rest_days_diff` | `home_rest_days − away_rest_days` |
-| `position_diff` | Current home position − away position |
+| `position_diff` | Matchday snapshot home position − away position |
 
 Registered as `xgboost-match-classifier` · alias `Production`.
 
 | Metric | Value |
 |---|---|
-| CV accuracy (mean ± std) | 62.2% ± 1.5% |
-| Accuracy — last fold (2025/26) | **64.3%** |
-| Brier — last fold | 0.434 |
-| vs Poisson | +15.2 pp |
+| CV accuracy (mean ± std) | 50.4% ± 3.4% |
+| Accuracy — last fold | **55.9%** |
+| Brier — last fold | 0.558 |
+| Baseline — last fold | 49.0% |
 
 **Feature importance (gain):**
 
@@ -262,9 +281,8 @@ Registered as `xgboost-match-classifier` · alias `Production`.
 
 ### Ensemble (`ensemble.py`)
 
-Grid search over `(w_poisson, w_xgb)` pairs: `[(0.2, 0.8), (0.3, 0.7), (0.35, 0.65), (0.4, 0.6)]`.  
-Guard: ensemble only registered if XGBoost Brier < Poisson Brier.  
-Best combo (2025/26 holdout): **XGBoost only** — blending with Poisson worsens calibration.
+Grid search over `(w_poisson, w_xgb)` pairs with a calibration guard.  
+Current best combo on the cleaned evaluation is still effectively **XGBoost only** — blending with Poisson worsens calibration.
 
 Registered as `ensemble-match-predictor` · alias `Production`.
 
@@ -283,9 +301,14 @@ Loads the ensemble from MLflow at startup. Falls back to Poisson if ensemble is 
 |---|---|---|
 | `GET` | `/health` | Liveness probe → `{"status": "ok"}` |
 | `POST` | `/predict` | P(home win / draw / away win) + expected goals |
+| `POST` | `/predict/explain` | Prediction plus per-feature contribution summary |
+| `GET` | `/fixtures` | Current-season fixtures with live probabilities |
+| `GET` | `/fixtures/{id}` | Match detail, H2H, form, explanation |
 | `GET` | `/standings` | Full LaLiga table with projected points and form strings |
+| `GET` | `/model/metrics` | Live registered-model metrics from MLflow |
 | `GET` | `/teams/{id}/stats` | Home/away split: goals, points, clean sheets, strength |
 | `GET` | `/teams/{id}/form` | Last N matches with result, score, opponent |
+| `GET` | `/teams/{id}/xg` | Accumulated xG/xGA series |
 
 #### `POST /predict` example
 
@@ -304,7 +327,7 @@ curl -X POST http://localhost:8001/predict \
   "away_win": 0.160,
   "expected_home_goals": 1.526,
   "expected_away_goals": 0.657,
-  "model_version": "ensemble-v2"
+  "model_version": "ensemble-v3"
 }
 ```
 
@@ -316,11 +339,12 @@ Interactive docs: **http://localhost:8001/docs**
 
 | Path | Content |
 |---|---|
-| `/overview` | Season KPIs, top 3 upcoming predictions, standings snapshot |
-| `/fixtures` | Full matchday prediction grid |
-| `/predictions` | Interactive team selector → real-time probability bars |
+| `/overview` | Season KPIs, top predictions, standings snapshot, live model metrics |
+| `/fixtures` | Full matchday prediction grid with live probabilities |
+| `/predictions` | Interactive team selector, probability bars, feature explanations |
+| `/matches/[id]` | Fixture detail, H2H, recent form, model explanation |
 | `/standings` | Full table with form dots (W/D/L), points, projected final points |
-| `/teams/[id]` | Home vs away stat cards, strength metrics, last 10 matches |
+| `/teams/[id]` | Home vs away stat cards, strength metrics, last matches, accumulated xG |
 | `/model` | Accuracy / Brier / log-loss KPIs, feature importance bar chart |
 
 ---
@@ -395,7 +419,20 @@ Always start the dev server with `--hostname 127.0.0.1` (already set in `package
 |---|---|
 | **API tier** | football-data.org free tier: 10 req/min and access to the 3 most recent seasons only |
 | **Static attack/defence strength** | `mart_team_stats` aggregates the whole season. Strength early in the season (small sample) carries the same weight as late in the season |
+| **Sparse advanced stats history** | If only a few API-Football matches are ingested, xG-based rolling features and charts are available only for those teams/matches |
 | **Ensemble calibration** | With one season of data the Brier-based guard falls back to XGBoost-only because Poisson hurts calibration. With more seasons, a blend may outperform either model individually |
+
+## Model benchmark
+
+Real benchmark run on the cleaned dataset (`1053` finished matches, same temporal folds for all models):
+
+| Model | CV accuracy (mean ± std) | Accuracy last fold | CV Brier | CV log-loss | Draw recall last fold | Verdict |
+|---|---:|---:|---:|---:|---:|---|
+| XGBoost | **50.4% ± 3.4%** | 54.8% | **0.597** | **1.002** | **15.4%** | Best overall balance |
+| CatBoost | 49.9% ± 4.5% | **56.3%** | 0.604 | 1.011 | 6.2% | Worth keeping as challenger, not as replacement |
+| FT-Transformer | 50.2% ± 2.7% | 50.6% | 0.613 | 1.026 | 6.2% | Not worth adopting |
+
+Decision: keep **XGBoost** as the main production classifier. CatBoost showed a slightly better last-fold accuracy, but worse calibration and much weaker draw handling.
 ---
 
 ## Next steps
