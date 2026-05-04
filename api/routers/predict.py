@@ -73,6 +73,7 @@ class _ModelState:
         self._ensemble_config: dict | None = None   # {w_poisson, w_xgb, ...}
         self._poisson_version: str = "unknown"
         self._ensemble_version: str = "unknown"
+        self._fallback_mode: bool = False
 
     # ── loaders ───────────────────────────────────────────────────────────────
 
@@ -167,7 +168,8 @@ class _ModelState:
         In Poisson-only mode it is ignored.
         """
         if self._poisson is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
+            self._fallback_mode = True
+            return 0.45, 0.27, 0.28
 
         # ── Poisson probabilities: [H, D, A] ──────────────────────────────────
         input_df = pd.DataFrame([{
@@ -255,6 +257,8 @@ class _ModelState:
 
     @property
     def model_version(self) -> str:
+        if self._fallback_mode:
+            return "fallback-demo"
         if self.is_ensemble:
             return f"ensemble-v{self._ensemble_version}"
         return f"poisson-v{self._poisson_version}"
@@ -274,9 +278,9 @@ async def lifespan(app) -> AsyncGenerator[None, None]:  # type: ignore[type-arg]
     try:
         _state.load()
     except Exception as exc:
-        log.error("Failed to load model from MLflow: %s", exc)
-        log.error("Ensure training scripts have been run and MLflow is at %s", MLFLOW_URI)
-        raise
+        _state._fallback_mode = True
+        log.warning("Failed to load model from MLflow: %s", exc)
+        log.warning("Starting API in fallback demo mode without registered models.")
     yield
 
 
@@ -327,11 +331,17 @@ def predict(
         ) from exc
 
     # ── expected goals always from Poisson ───────────────────────────────────
-    input_df = pd.DataFrame([{
-        "home_team_id": body.home_team_id,
-        "away_team_id": body.away_team_id,
-    }])
-    poisson_row = state.poisson_predictor.predict(None, input_df).iloc[0]
+    if state._poisson is None:
+        expected_home_goals = 1.4
+        expected_away_goals = 1.1
+    else:
+        input_df = pd.DataFrame([{
+            "home_team_id": body.home_team_id,
+            "away_team_id": body.away_team_id,
+        }])
+        poisson_row = state.poisson_predictor.predict(None, input_df).iloc[0]
+        expected_home_goals = float(poisson_row["expected_home_goals"])
+        expected_away_goals = float(poisson_row["expected_away_goals"])
 
     return PredictResponse(
         home_team_id=body.home_team_id,
@@ -339,8 +349,8 @@ def predict(
         home_win=p_home,
         draw=p_draw,
         away_win=p_away,
-        expected_home_goals=float(poisson_row["expected_home_goals"]),
-        expected_away_goals=float(poisson_row["expected_away_goals"]),
+        expected_home_goals=expected_home_goals,
+        expected_away_goals=expected_away_goals,
         model_version=state.model_version,
     )
 
@@ -381,11 +391,17 @@ def explain(
             detail=f"Prediction error: {exc}",
         ) from exc
 
-    input_df = pd.DataFrame([{
-        "home_team_id": body.home_team_id,
-        "away_team_id": body.away_team_id,
-    }])
-    poisson_row = state.poisson_predictor.predict(None, input_df).iloc[0]
+    if state._poisson is None:
+        expected_home_goals = 1.4
+        expected_away_goals = 1.1
+    else:
+        input_df = pd.DataFrame([{
+            "home_team_id": body.home_team_id,
+            "away_team_id": body.away_team_id,
+        }])
+        poisson_row = state.poisson_predictor.predict(None, input_df).iloc[0]
+        expected_home_goals = float(poisson_row["expected_home_goals"])
+        expected_away_goals = float(poisson_row["expected_away_goals"])
 
     return PredictExplainResponse(
         home_team_id=body.home_team_id,
@@ -393,8 +409,8 @@ def explain(
         home_win=p_home,
         draw=p_draw,
         away_win=p_away,
-        expected_home_goals=float(poisson_row["expected_home_goals"]),
-        expected_away_goals=float(poisson_row["expected_away_goals"]),
+        expected_home_goals=expected_home_goals,
+        expected_away_goals=expected_away_goals,
         model_version=state.model_version,
         top_contributions=top_contributions,
         explanation_label=explanation_label,

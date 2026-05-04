@@ -3,6 +3,7 @@ services:
   # ─── Airflow metadata DB ────────────────────────────────────────────────────
   postgres:
     image: postgres:15
+    profiles: ["airflow"]
     environment:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
@@ -21,6 +22,7 @@ services:
     build:
       context: .
       dockerfile: infra/airflow/Dockerfile
+    profiles: ["airflow"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +66,7 @@ services:
     build:
       context: .
       dockerfile: infra/airflow/Dockerfile
+    profiles: ["airflow"]
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -103,6 +106,7 @@ services:
     build:
       context: .
       dockerfile: infra/airflow/Dockerfile
+    profiles: ["airflow"]
     depends_on:
       airflow-init:
         condition: service_completed_successfully
@@ -216,12 +220,16 @@ services:
   # Port 5001 (not 5000) avoids conflict with macOS AirPlay Receiver which
   # occupies :5000 by default. Container internally still uses 5000.
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.11.0
+    build:
+      context: .
+      dockerfile: infra/mlflow/Dockerfile
     depends_on:
       mlflow-postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "5001:5000"
     env_file: .env
@@ -290,10 +298,20 @@ services:
       CLICKHOUSE_DB: ${CLICKHOUSE_DB}
       MLFLOW_TRACKING_URI: http://mlflow:5000
     command: >
-      python ml/scripts/train_poisson.py
-        --ch-host clickhouse
-        --ch-port 8123
-        --mlflow-uri http://mlflow:5000
+      bash -c "
+        python ml/scripts/train_poisson.py
+          --ch-host clickhouse
+          --ch-port 8123
+          --mlflow-uri http://mlflow:5000 &&
+        python ml/scripts/train_classifier.py
+          --ch-host clickhouse
+          --ch-port 8123
+          --mlflow-uri http://mlflow:5000 &&
+        python ml/scripts/ensemble.py
+          --ch-host clickhouse
+          --ch-port 8123
+          --mlflow-uri http://mlflow:5000
+      "
     restart: on-failure
 
   # ─── api: FastAPI on :8001 (host) ────────────────────────────────────────────

@@ -48,7 +48,7 @@ football-data.org + API-Football  (current multi-season window)
 
 ```bash
 cp .env.example .env          # fill in FOOTBALL_API_KEY at minimum
-docker compose up -d
+docker compose up -d --build
 ```
 
 Docker Compose runs the services in dependency order:
@@ -60,6 +60,12 @@ Docker Compose runs the services in dependency order:
 5. `frontend` builds and starts Next.js
 
 Open **http://localhost:3001** once all services are healthy (~3–5 min on first run, faster after image build cache warms).
+
+`Airflow` is optional in the default stack so the app can come up with a single command. If you also want the orchestration UI and schedulers, run:
+
+```bash
+docker compose --profile airflow up -d --build
+```
 
 ---
 
@@ -75,7 +81,7 @@ pip install -r requirements.txt
 brew install libomp
 
 # Start infrastructure only (skip api/frontend containers)
-docker compose up -d clickhouse mlflow minio airflow-webserver airflow-scheduler postgres
+docker compose up -d clickhouse mlflow minio mlflow-postgres
 
 # Seed data (3 seasons)
 python scripts/bootstrap_clickhouse.py --seasons 2023 2024 2025
